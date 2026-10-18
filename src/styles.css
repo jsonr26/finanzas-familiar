@@ -4,15 +4,21 @@
   --warn:#b54708; --warn-bg:#fef0c7; --bad:#d92d20; --ok:#079455;
   --c-ingreso:#16a34a; --c-descuento:#ea580c; --c-fijo:#2563eb; --c-variable:#9333ea; --c-ahorro:#0891b2;
   --shadow:0 1px 2px rgba(16,24,40,.04);
-  --radius:14px;
+  --radius:14px; color-scheme:light;
 }
+/* Tema oscuro: automático (sistema) salvo que se haya elegido «claro»; o forzado con data-tema="oscuro" (src/tema.js). */
 @media (prefers-color-scheme: dark) {
-  :root { --bg:#0e1118; --card:#171c27; --ink:#e9edf6; --muted:#98a2b8; --line:#272e3d; --hover:#1d2331;
+  :root:not([data-tema="claro"]) { --bg:#0e1118; --card:#171c27; --ink:#e9edf6; --muted:#98a2b8; --line:#272e3d; --hover:#1d2331;
     --brand:#2dd4bf; --brand-ink:#04211e; --brand-soft:#12332f;
     --warn:#fdb022; --warn-bg:#3a2a07; --bad:#f97066; --ok:#47cd89;
     --c-ingreso:#4ade80; --c-descuento:#fb923c; --c-fijo:#60a5fa; --c-variable:#c084fc; --c-ahorro:#22d3ee;
-    --shadow:none; }
+    --shadow:none; color-scheme:dark; }
 }
+:root[data-tema="oscuro"] { --bg:#0e1118; --card:#171c27; --ink:#e9edf6; --muted:#98a2b8; --line:#272e3d; --hover:#1d2331;
+    --brand:#2dd4bf; --brand-ink:#04211e; --brand-soft:#12332f;
+    --warn:#fdb022; --warn-bg:#3a2a07; --bad:#f97066; --ok:#47cd89;
+    --c-ingreso:#4ade80; --c-descuento:#fb923c; --c-fijo:#60a5fa; --c-variable:#c084fc; --c-ahorro:#22d3ee;
+    --shadow:none; color-scheme:dark; }
 * { box-sizing:border-box; }
 body { margin:0; font:15px/1.5 Inter,system-ui,-apple-system,"Segoe UI",sans-serif; background:var(--bg); color:var(--ink); -webkit-font-smoothing:antialiased; }
 h1,h2,h3 { letter-spacing:-.01em; }
@@ -244,3 +250,9 @@ dialog.paleta input { width:100%; font-size:16px; }
 .pal-lista .ic { width:22px; text-align:center; }
 .pal-lista .vacio-pal { color:var(--muted); cursor:default; }
 .pal-ayuda { margin:4px 2px 0; font-size:12px; }
+
+/* Botón de tema (pie del menú lateral) */
+.side .tema-btn { display:flex; align-items:center; gap:10px; width:100%; text-align:left; background:none; border:0; padding:9px 10px; border-radius:10px; color:var(--muted); cursor:pointer; font:inherit; font-weight:500; margin-top:8px; }
+.side .tema-btn:hover { background:var(--hover); color:var(--ink); }
+.app.colapsada .side .tema-btn { justify-content:center; padding:10px 0; }
+@media (max-width:900px) { .side .tema-btn { justify-content:center; padding:10px 0; } }

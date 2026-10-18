@@ -9,6 +9,9 @@ import * as repo from './repo.js';
 import { editarMovimiento } from './views/mes.js';
 import { buscarConcepto } from './views/conceptos.js';
 import { abrirPaleta } from './paleta.js';
+import { TEMAS, temaActual, aplicarTema, siguienteTema } from './tema.js';
+
+aplicarTema(temaActual());
 
 const app = document.getElementById('app');
 let vistaActual = 'inicio';
@@ -70,6 +73,7 @@ function paleta() {
   if (!conectado) return;
   abrirPaleta([
     ...Object.entries(VIEWS).map(([k, v]) => ({ texto: v.titulo, detalle: 'Ir a la vista', icono: v.icono, siempre: true, fn: () => ir(k) })),
+    { texto: 'Cambiar tema', detalle: 'Sistema, claro u oscuro', icono: '🌓', siempre: false, fn: () => { siguienteTema(); render(); } },
     { texto: 'Agregar movimiento', detalle: 'Acción', icono: '➕', siempre: true, fn: () => editarMovimiento({}, render) },
     ...repo.conceptos().filter((c) => c.activo).map((c) => ({ texto: c.nombre, detalle: c.grupo ?? 'Concepto', icono: '🏷️', fn: () => { buscarConcepto(c.nombre); ir('conceptos'); } })),
   ]);
@@ -97,6 +101,7 @@ function render() {
       <div class="marca"><span class="logo">💰</span><b>Finanzas</b><button class="icon" id="plegar" title="Plegar o desplegar el menú" aria-label="Plegar menú">«</button></div>
       <nav>${GRUPOS.map(([g, claves]) => `${g ? `<h4>${g}</h4>` : ''}${claves.map((k) => `<button data-v="${k}" class="${k === vistaActual ? 'on' : ''}" title="${VIEWS[k].titulo}">
         <span class="ic">${VIEWS[k].icono ?? ''}</span><span class="tx">${VIEWS[k].titulo}</span>${k === 'mes' && urgentes ? `<span class="insignia">${urgentes}</span>` : ''}</button>`).join('')}`).join('')}</nav>
+      <button class="tema-btn" id="tema" title="Cambiar tema (sistema, claro u oscuro)"><span class="ic">${TEMAS[temaActual()][0]}</span><span class="tx">Tema: ${TEMAS[temaActual()][1]}</span></button>
       ${estado}
     </aside>
     <div class="cuerpo">
@@ -111,6 +116,7 @@ function render() {
     try { localStorage.setItem('finanzas.menu', colapsada ? 'colapsado' : 'desplegado'); } catch { /* preferencia opcional */ }
   };
   if (v.periodo) enlazarPeriodo(shell.querySelector('.topbar'), render);
+  shell.querySelector('#tema').onclick = () => { siguienteTema(); render(); };
   shell.querySelector('#buscar-global').onclick = paleta;
   shell.querySelector('#agregar').onclick = () => editarMovimiento({}, render);
   shell.querySelector('#reintentar')?.addEventListener('click', async () => { await storage.reintentar(); render(); });
