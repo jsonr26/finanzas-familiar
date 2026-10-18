@@ -1,2 +1,9 @@
 node_modules
 dist
+
+# Datos reales: nunca se versionan
+finanzas.sqlite
+*.sqlite
+finanzas.lock
+*.lock.json
+backups/

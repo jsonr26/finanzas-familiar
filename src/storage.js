@@ -15,8 +15,10 @@ let lastModified = 0;
 let saveTimer = null;
 let heartbeat = null;
 let backedUpToday = false;
+let vigiaBloqueo = null;
 const subs = new Set();
 
+const VIGILANCIA_MS = 10_000;   // en solo lectura se revisa el bloqueo más seguido que el latido
 export const state = { readonly: true, holder: null, saved: true, error: null, folder: '' };
 export const subscribe = (fn) => { subs.add(fn); return () => subs.delete(fn); };
 const emit = (extra) => { Object.assign(state, extra); subs.forEach((fn) => fn(state)); };
@@ -69,6 +71,7 @@ async function conectar(h) {
   if (!bytes && lockInfo.canEdit) await guardarAhora();   // crea el archivo en una base nueva
   emit({ readonly: !lockInfo.canEdit, holder: lockInfo.holder, saved: true });
   iniciarLatido();
+  iniciarVigilancia();
   return state;
 }
 
@@ -140,6 +143,15 @@ function iniciarLatido() {
   }, HEARTBEAT_MS);
 }
 
+/** En solo lectura, revisa el bloqueo cada pocos segundos: refresca al dueño y pasa a edición sola cuando se libera. */
+function iniciarVigilancia() {
+  clearInterval(vigiaBloqueo);
+  vigiaBloqueo = setInterval(async () => {
+    if (!state.readonly || !dir) return;
+    try { await reintentar(); } catch (e) { emit({ error: e.message }); }
+  }, VIGILANCIA_MS);
+}
+
 async function revisarCambioExterno() {
   const f = await (await dir.getFileHandle(DB_FILE)).getFile();
   if (f.lastModified <= lastModified) return;
@@ -170,6 +182,21 @@ export async function guardarAhora() {
   await w.close();
   lastModified = (await fh.getFile()).lastModified;
   emit({ saved: true, error: null, externalChange: false });
+}
+
+/**
+ * Guarda una copia de lo que hay AHORA en memoria en backups/finanzas-<etiqueta>-<fecha y hora>.sqlite.
+ * No entra en la rotación de los 30 respaldos diarios, así que no se borra sola. Devuelve el nombre del archivo.
+ */
+export async function respaldarAhora(etiqueta) {
+  if (!dir) throw new Error('No hay carpeta conectada.');
+  const bdir = await dir.getDirectoryHandle(BACKUP_DIR, { create: true });
+  const marca = new Date().toISOString().slice(0, 19).replace(/[T:]/g, '-');
+  const nombre = `finanzas-${etiqueta}-${marca}.sqlite`;
+  const w = await (await bdir.getFileHandle(nombre, { create: true })).createWritable();
+  await w.write(exportBytes());
+  await w.close();
+  return nombre;
 }
 
 async function respaldarSiCorresponde() {

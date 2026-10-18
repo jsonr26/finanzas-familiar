@@ -10,7 +10,7 @@ export async function openDatabase(bytes) {
   db?.close();
   db = bytes ? new SQL.Database(bytes) : new SQL.Database();
   db.run('PRAGMA foreign_keys = ON');
-  if (!readonly) migrate();
+  migrate(); // también en solo lectura: queda en memoria, nunca se guarda (guardarAhora no corre en ese modo)
 }
 
 function migrate() {
@@ -57,16 +57,22 @@ export function run(sql, params = []) {
   return id;
 }
 
+let enTransaccion = false;
+/** Las transacciones se pueden anidar: la interna participa de la externa. */
 export function transaction(fn) {
   if (readonly) throw new Error('El archivo está en modo solo lectura.');
+  if (enTransaccion) return fn();
+  enTransaccion = true;
   db.exec('BEGIN');
   try {
     const out = fn();
     db.exec('COMMIT');
+    enTransaccion = false;
     listeners.forEach((f) => f());
     return out;
   } catch (e) {
     db.exec('ROLLBACK');
+    enTransaccion = false;
     throw e;
   }
 }

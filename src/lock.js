@@ -12,3 +12,15 @@ export function evaluateLock(lock, myId, now = Date.now()) {
   if (now - lock.ts > LOCK_TTL_MS) return { canEdit: true, holder: null };
   return { canEdit: false, holder: lock };
 }
+
+/** Segundos que faltan para que el bloqueo caduque SI su dueño deja de dar señal (0 = ya caducó). */
+export function segundosParaLiberar(lock, now = Date.now()) {
+  if (!lock || typeof lock.ts !== 'number') return 0;
+  return Math.max(0, Math.ceil((lock.ts + LOCK_TTL_MS - now) / 1000));
+}
+
+/** Segundos desde el último latido del dueño (nunca negativo: los relojes de dos equipos pueden diferir). */
+export function haceSegundos(lock, now = Date.now()) {
+  if (!lock || typeof lock.ts !== 'number') return 0;
+  return Math.max(0, Math.floor((now - lock.ts) / 1000));
+}
