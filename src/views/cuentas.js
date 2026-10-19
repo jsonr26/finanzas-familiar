@@ -73,7 +73,7 @@ export default {
           <td class="num">${cop(r.cuentas.reduce((s, c) => s + c.ingresos, 0) + r.sinCuenta.ingresos)}</td>
           <td class="num">${cop(r.cuentas.reduce((s, c) => s + c.gastos, 0) + r.sinCuenta.gastos)}</td>
           <td class="num">${cop(r.total)}</td><td colspan="3"></td></tr></tfoot></table>
-        ${hayAjuste ? `<p class="muted">Saldo de cierre según la vista Mes: <b>${cop(saldoMes)}</b>. La diferencia (${cop(r.total - saldoMes)}) viene de los saldos iniciales de las cuentas o de un saldo anterior fijado a mano en Mes.</p>`
+        ${hayAjuste ? `<p class="muted">Saldo de cierre según la vista Mes: <b>${cop(saldoMes)}</b>. La diferencia (${cop(r.total - saldoMes)}) viene de un saldo anterior fijado a mano en Mes (los saldos iniciales de las cuentas ya están incluidos).</p>`
           : '<p class="pos">✓ El total de las cuentas coincide con el saldo de cierre de la vista Mes.</p>'}
       </div>
     </div>`);

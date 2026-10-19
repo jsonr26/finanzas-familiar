@@ -167,6 +167,49 @@ describe('repo', () => {
     expect(repo.tarjetas()[0].pendiente).toBe(1000);
   });
 
+  it('tarjeta: últimos 4 dígitos, cupo y color se guardan, se validan y vienen con fecha de pago y cuenta', () => {
+    const cuenta = repo.guardarCuenta({ nombre: 'Banco Sindy', saldo_inicial: 0 });
+    const t = repo.crearTarjeta({ nombre: 'Visa', cuenta_id: cuenta, fecha_pago: '2026-01-20', ultimos4: '4821', cupo: 5000000, color: 'morado' });
+    expect(repo.tarjetas()[0]).toMatchObject({ id: t, ultimos4: '4821', cupo: 5000000, color: 'morado', fecha_pago: '2026-01-20', cuenta: 'Banco Sindy' });
+    repo.actualizarTarjeta({ id: t, nombre: 'Visa', cuenta_id: cuenta, fecha_pago: '2026-01-20', ultimos4: '', cupo: '', color: '' });
+    expect(repo.tarjetas()[0]).toMatchObject({ ultimos4: null, cupo: null, color: null });
+    expect(() => repo.actualizarTarjeta({ id: t, nombre: 'Visa', ultimos4: '12' })).toThrow(/4 números/);
+    expect(() => repo.actualizarTarjeta({ id: t, nombre: 'Visa', ultimos4: '1234 5678' })).toThrow(/4 números/);
+    expect(() => repo.actualizarTarjeta({ id: t, nombre: 'Visa', cupo: -5 })).toThrow(/cupo/);
+    expect(() => repo.actualizarTarjeta({ id: t, nombre: 'Visa', color: 'naranja' })).toThrow(/Color/);
+    expect(() => repo.crearTarjeta({ nombre: 'Otra', ultimos4: 'abcd' })).toThrow(/4 números/);
+    expect(repo.tarjetas()).toHaveLength(1);   // la validación falla antes de crear nada
+  });
+
+  it('caja: color y meta se guardan, se validan y se conservan si no se envían', () => {
+    const id = repo.guardarCaja({ nombre: 'Viaje', banco: 'Nu', color: 'azul', meta: 10000000 });
+    expect(repo.cajas()[0]).toMatchObject({ color: 'azul', meta: 10000000 });
+    repo.guardarCaja({ id, nombre: 'Viaje 2', banco: 'Nu' });                  // sin color ni meta: se conservan
+    expect(repo.cajas()[0]).toMatchObject({ nombre: 'Viaje 2', color: 'azul', meta: 10000000 });
+    repo.guardarCaja({ id, nombre: 'Viaje 2', color: '', meta: '' });           // vacíos explícitos: se quitan
+    expect(repo.cajas()[0]).toMatchObject({ color: null, meta: null });
+    expect(() => repo.guardarCaja({ id, nombre: 'X', color: 'naranja' })).toThrow(/Color/);
+    expect(() => repo.guardarCaja({ id, nombre: 'X', meta: -1 })).toThrow(/meta/);
+    expect(() => repo.guardarCaja({ nombre: 'Otra', meta: 'abc' })).toThrow(/meta/);
+    expect(repo.cajas()).toHaveLength(1);
+  });
+
+  it('último registro: toma el anotado más recientemente, sea movimiento o ingreso, y guarda la hora', () => {
+    expect(repo.ultimoRegistro()).toBeNull();
+    const sueldo = repo.guardarConcepto({ tipo: 'ingreso', nombre: 'Sueldo' });
+    const mercado = repo.guardarConcepto({ tipo: 'gasto_variable', nombre: 'Mercado' });
+    const ing = repo.guardarIngreso({ anio: 2026, mes: 10, quincena: 1, concepto_id: sueldo, clase: 'sueldo', monto: 1000 });
+    expect(repo.ultimoRegistro()).toMatchObject({ tipo: 'ingreso', id: ing, concepto: 'Sueldo', anio: 2026, mes: 10 });
+    const m1 = repo.guardarMovimiento({ fecha: '2026-10-20', concepto_id: mercado, monto: 50 });
+    const m2 = repo.guardarMovimiento({ fecha: '2026-09-01', concepto_id: mercado, monto: 70 });   // fecha vieja, pero anotado después
+    expect(repo.ultimoRegistro()).toMatchObject({ tipo: 'movimiento', id: m2, fecha: '2026-09-01', monto: 70 });
+    expect(repo.movimientosMes(2026, 10)[0].creado_en).toMatch(/^\d{4}-\d{2}-\d{2}T/);
+    repo.guardarMovimiento({ id: m1, fecha: '2026-10-21', concepto_id: mercado, monto: 55 });       // editar no cambia la hora de anotación
+    expect(repo.ultimoRegistro().id).toBe(m2);
+    repo.eliminarMovimiento(m2);
+    expect(repo.ultimoRegistro()).toMatchObject({ tipo: 'movimiento', id: m1 });
+  });
+
   it('tarjetaDeConcepto identifica el concepto de una tarjeta activa y nada más', () => {
     const t = repo.crearTarjeta({ nombre: 'Visa' });
     const concepto = repo.tarjetas()[0].concepto_id;
@@ -202,6 +245,8 @@ describe('repo', () => {
     expect(r.sinCuenta).toEqual({ ingresos: 1000, gastos: 300 });
     expect(r.cuentas.find((c) => c.id === bj)).toMatchObject({ ingresos: 1800, gastos: 500, calculado: 1300 });
     expect(r.total).toBe(100 + 700 + 1300); // 2100 = inicial + ingresos − gastos
+    expect(repo.saldoBaseCuentas()).toBe(100);
+    expect(repo.saldoAnterior(2026, 11)).toBe(r.total); // el saldo de Mes al cierre de octubre incluye los saldos iniciales y cuadra con Cuentas
 
     expect(repo.asignarCuentaPorPersona(bs)).toBe(2);
     r = repo.saldosCuentas(2026, 10);

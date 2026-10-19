@@ -81,16 +81,16 @@ export function sumarDias(iso, n) {
 
 /**
  * Saldo con el que arranca un mes. Si hay un saldo escrito a mano para ese mes manda ese; si no,
- * se encadena desde el primer mes con datos: saldo + neto del mes - salidas (gastos y ahorro) del mes.
+ * se encadena desde el primer mes con datos, partiendo de `base` (la suma de los saldos iniciales de las cuentas): saldo + neto del mes - salidas (gastos y ahorro) del mes.
  * Los mapas usan claves 'AAAA-MM'; un saldo manual de un mes anterior también reinicia la cadena.
  */
-export function saldoInicial({ neto = {}, gasto = {}, manual = {} }, anio, mes) {
+export function saldoInicial({ neto = {}, gasto = {}, manual = {}, base = 0 }, anio, mes) {
   const objetivo = claveMes(anio, mes);
   if (manual[objetivo] !== undefined) return { valor: manual[objetivo], manual: true };
   const previas = [...Object.keys(neto), ...Object.keys(gasto), ...Object.keys(manual)].filter((k) => k < objetivo).sort();
-  if (!previas.length) return { valor: 0, manual: false };
+  if (!previas.length) return { valor: base, manual: false };
   let [a, m] = previas[0].split('-').map(Number);
-  let saldo = 0;
+  let saldo = base;
   while (claveMes(a, m) < objetivo) {
     const k = claveMes(a, m);
     if (manual[k] !== undefined) saldo = manual[k];
@@ -378,3 +378,39 @@ export function evaluarExpresion(txt) {
 
 /** Número → texto con el formato de los campos de dinero (miles con punto, coma decimal). */
 export const formatoDinero = (n) => formatearEntrada(String(n).replace('.', ','));
+
+/** Ícono de una caja de ahorro según su nombre (🐷 si ninguna palabra coincide). */
+const ICONOS_CAJA = [
+  [/viaj|vacacion|paseo|turismo|vuelo/, '✈️'], [/emergenc|imprevist|reserva|colchon/, '🛡️'], [/ganancia|interes|rendimiento/, '💰'],
+  [/casa|vivienda|apartament|hogar|arriendo|inmueble/, '🏠'], [/carro|moto|vehicul|auto\b|automovil/, '🚗'],
+  [/educacion|estudio|colegio|universidad|matricula|curso/, '🎓'], [/salud|medic|odontolog|clinica/, '🩺'],
+  [/navidad|fiesta|regalo|cumple/, '🎁'], [/boda|matrimonio/, '💍'], [/jubilacion|pension|retiro/, '🏖️'], [/bebe|hijo|hija|nino/, '👶'],
+  [/tecnolog|celular|computador|portatil|electrodomestic/, '💻'], [/negocio|inversion|empresa|proyecto/, '📈'], [/mascota|perro|gato/, '🐾'],
+];
+export function iconoCaja(nombre) {
+  const t = normalizar(nombre);
+  return ICONOS_CAJA.find(([re]) => re.test(t))?.[1] ?? '🐷';
+}
+
+/** «hace 4 min», «hace 2 h»… para un momento ISO; null si no hay momento o pasó más de un día (mostrar la fecha). */
+export function haceTiempo(iso, ahora = Date.now()) {
+  const t = iso ? Date.parse(iso) : NaN;
+  if (!Number.isFinite(t)) return null;
+  const seg = Math.max(0, Math.round((ahora - t) / 1000));
+  if (seg < 45) return 'hace unos segundos';
+  if (seg < 3600) return `hace ${Math.max(1, Math.round(seg / 60))} min`;
+  if (seg < 86400) return `hace ${Math.round(seg / 3600)} h`;
+  return null;
+}
+
+/** Ícono de un grupo de gasto según su nombre (🧾 si ninguna palabra coincide; 🐷 para el ahorro). */
+const ICONOS_GRUPO = [
+  [/ahorro/, '🐷'], [/servicio|luz|agua|energia|internet|gas\b/, '💡'], [/aliment|mercado|comida|super/, '🛒'], [/transporte|movilidad|gasolina|taxi|bus/, '🚌'],
+  [/hogar|casa|arriendo|vivienda|aseo/, '🏠'], [/deuda|credito|tarjeta|prestamo|cuota/, '💳'], [/salud|medic|farmacia/, '🩺'], [/educa|colegio|universidad|curso/, '🎓'],
+  [/entreten|ocio|diversion|salida|viaje/, '🎉'], [/ropa|vestuario|calzado/, '👕'], [/mascota|perro|gato/, '🐾'], [/impuesto|seguro/, '📄'],
+];
+export function iconoGrupo(grupo, categoria) {
+  if (categoria === 'Ahorro') return '🐷';
+  const t = normalizar(grupo);
+  return ICONOS_GRUPO.find(([re]) => re.test(t))?.[1] ?? '🧾';
+}

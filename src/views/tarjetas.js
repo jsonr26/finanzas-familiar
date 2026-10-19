@@ -1,11 +1,21 @@
 import * as repo from '../repo.js';
-import { cop, parseMonto, hoyISO, MESES, claveMes, calendarioCuotas, mensualAEa } from '../calc.js';
+import { cop, parseMonto, hoyISO, MESES, claveMes, calendarioCuotas, mensualAEa, vencimientoEnMes } from '../calc.js';
 import { esc, el, formulario, confirmar, alerta, intentar } from '../ui.js';
 import { periodo } from '../periodo.js';
+import { PALETA, NOMBRE_COLOR } from '../colores.js';
 
 // Cuotas marcadas para pagar; se conserva al re-renderizar (las pagadas dejan de existir como pendientes).
 const seleccion = new Set();
 const verPagadas = new Set(); // tarjetas con el historial de pagos desplegado
+let abierta = null;           // id de la tarjeta cuyo detalle se está viendo (null = lista de tarjetas)
+
+const colorDe = (t) => PALETA[t.color] ?? PALETA[repo.COLORES_TARJETA[t.id % repo.COLORES_TARJETA.length]];
+const camposDibujo = (t = {}) => [
+  { name: 'ultimos4', label: 'Últimos 4 dígitos (opcional; nunca el número completo)', type: 'text', value: t.ultimos4, placeholder: '4821' },
+  { name: 'cupo', label: 'Cupo (opcional, para ver cuánto va usado)', type: 'money', value: t.cupo || '' },
+  { name: 'color', label: 'Color de la tarjeta', type: 'select', options: Object.entries(NOMBRE_COLOR), vacio: 'Automático', value: t.color },
+];
+const leerDibujo = (v) => ({ ultimos4: v.ultimos4, cupo: v.cupo.trim() ? parseMonto(v.cupo) : null, color: v.color });
 
 const cuentasOpc = () => repo.cuentas().map((c) => [c.id, c.nombre]);
 /** Conceptos que una compra puede cubrir (más los que ya cubre, aunque ya no estén disponibles), con su monto estimado como sugerencia. */
@@ -37,11 +47,12 @@ async function nuevaTarjeta(rerender) {
       { name: 'nombre', label: 'Nombre (ej. Visa Bancolombia)', type: 'text', required: true },
       { name: 'cuenta_id', label: 'Cuenta desde la que se paga', type: 'select', options: cuentasOpc(), vacio: '—' },
       { name: 'fecha_pago', label: 'Fecha de pago (el día de cada mes)', type: 'date' },
+      ...camposDibujo(),
     ],
     extra: '<p class="muted">Se crea el concepto «Tarjeta …» (grupo Deudas) que recibe los pagos y aparece en Presupuesto y «Por pagar».</p>',
   });
   if (!v) return;
-  await intentar(() => { repo.crearTarjeta({ ...v, cuenta_id: v.cuenta_id ? Number(v.cuenta_id) : null }); rerender(); });
+  await intentar(() => { repo.crearTarjeta({ nombre: v.nombre, fecha_pago: v.fecha_pago, ...leerDibujo(v), cuenta_id: v.cuenta_id ? Number(v.cuenta_id) : null }); rerender(); });
 }
 
 async function nuevaCompra(tarjetaId, rerender) {
@@ -128,11 +139,12 @@ async function editarTarjeta(t, rerender) {
       { name: 'nombre', label: 'Nombre', type: 'text', value: t.nombre, required: true },
       { name: 'cuenta_id', label: 'Cuenta desde la que se paga', type: 'select', options: cuentasOpc(), vacio: '—', value: t.cuenta_id },
       { name: 'fecha_pago', label: 'Fecha de pago (el día de cada mes)', type: 'date', value: concepto?.fecha_pago },
+      ...camposDibujo(t),
     ],
     extra: '<p class="muted">El concepto «Tarjeta …» se renombra con ella.</p>',
   });
   if (!v) return;
-  await intentar(() => { repo.actualizarTarjeta({ id: t.id, nombre: v.nombre, cuenta_id: v.cuenta_id ? Number(v.cuenta_id) : null, fecha_pago: v.fecha_pago }); rerender(); });
+  await intentar(() => { repo.actualizarTarjeta({ id: t.id, nombre: v.nombre, cuenta_id: v.cuenta_id ? Number(v.cuenta_id) : null, fecha_pago: v.fecha_pago, ...leerDibujo(v) }); rerender(); });
 }
 
 async function pagar(t, pendientes, rerender) {
@@ -206,6 +218,27 @@ export default {
       concepto: repo.conceptos().find((c) => c.id === t.concepto_id)?.nombre ?? t.nombre,
       pendientes: repo.cuotasPendientes(t.id),
     }));
+    if (abierta !== null && !tarjetas.some((t) => t.id === abierta)) abierta = null;
+    const delMesDe = (t) => t.pendientes.filter((q) => claveMes(q.anio, q.mes) <= clave).reduce((s, q) => s + q.valor, 0);
+    const pctCupo = (t) => (t.cupo > 0 ? Math.min(100, Math.round((t.pendiente / t.cupo) * 100)) : null);
+    /** «Vence en N días» solo en el mes en curso, si hay algo por pagar y el vencimiento está a una semana o menos. */
+    const etiquetaVence = (t, delMes) => {
+      if (clave !== hoyISO().slice(0, 7) || !delMes || !t.fecha_pago) return '';
+      const d = Math.round((new Date(`${vencimientoEnMes(t.fecha_pago, anio, mes)}T00:00:00`) - new Date(new Date().toDateString())) / 86400000);
+      return d > 7 ? '' : `<span class="tj-tag">${d < 0 ? 'Vencida' : d === 0 ? 'Vence hoy' : `Vence en ${d} día${d === 1 ? '' : 's'}`}</span>`;
+    };
+    const dibujo = (t, mini = false) => {
+      const delMes = delMesDe(t), pct = pctCupo(t), dia = t.fecha_pago ? Number(t.fecha_pago.slice(8, 10)) : null;
+      const num = t.ultimos4 ? `<div class="tj-num">${mini ? '••••' : '•••• •••• ••••'} ${esc(t.ultimos4)}</div>` : '';
+      if (mini) return `<div class="tj mini" style="--tj:${colorDe(t)}"><b>${esc(t.nombre)}</b>${num}<span class="tj-deuda-mini">${cop(t.pendiente)}</span></div>`;
+      return `<div class="tj" style="--tj:${colorDe(t)}" data-abrir="${t.id}" role="button" tabindex="0" aria-label="Abrir el detalle de ${esc(t.nombre)}">
+        ${etiquetaVence(t, delMes)}
+        <div class="tj-top"><span class="tj-chip"></span><b>${esc(t.nombre)}</b></div>${num}
+        <div class="tj-deuda"><small>Deuda pendiente</small><span>${cop(t.pendiente)}</span></div>
+        <div class="tj-pie"><div><small>Por pagar en ${MESES[mes - 1].toLowerCase()}</small><b>${cop(delMes)}</b></div>
+          ${dia ? `<div><small>Día de pago</small><b>${dia}</b></div>` : ''}${t.cuenta ? `<div><small>Se paga con</small><b>${esc(t.cuenta)}</b></div>` : ''}</div>
+        ${pct !== null ? `<div class="tj-cupo" title="Cupo usado: ${pct} %"><i style="width:${pct}%"></i></div>` : ''}</div>`;
+    };
     const todas = tarjetas.flatMap((t) => t.pendientes);
     for (const id of [...seleccion]) if (!todas.some((q) => q.id === id)) seleccion.delete(id);
 
@@ -217,16 +250,17 @@ export default {
       <td class="num">${cop(q.capital)}</td><td class="num">${q.interes ? cop(q.interes) : '—'}</td><td class="num"><b>${cop(q.valor)}</b></td></tr>`;
 
     const tarjetaHTML = (t) => {
-      const delMes = t.pendientes.filter((q) => claveMes(q.anio, q.mes) <= clave).reduce((s, q) => s + q.valor, 0);
+      const delMes = delMesDe(t), pct = pctCupo(t);
       const compras = repo.comprasTarjeta(t.id);
       return `<section class="card tarjeta" data-t="${t.id}">
-        <div class="fila"><h2>💳 ${esc(t.nombre)}</h2><span class="sp"></span>
-          <button class="link" data-edit data-tarjeta="${t.id}">Editar tarjeta</button>
-          <button class="secondary" data-edit data-compra="${t.id}">+ Compra</button></div>
-        <div class="kpis kpis-chicos">
-          <div class="kpi"><small>Deuda pendiente</small><b>${cop(t.pendiente)}</b></div>
-          <div class="kpi gasto"><small>Por pagar hasta ${MESES[mes - 1]} ${anio}</small><b>${cop(delMes)}</b></div>
-        </div>
+        <div class="tj-detalle">${dibujo(t, true)}
+          <div class="kpis kpis-chicos">
+            <div class="kpi"><small>Deuda pendiente</small><b>${cop(t.pendiente)}</b></div>
+            <div class="kpi gasto"><small>Por pagar hasta ${MESES[mes - 1]} ${anio}</small><b>${cop(delMes)}</b></div>
+            ${pct !== null ? `<div class="kpi"><small>Cupo usado · ${pct} %</small><b>${cop(Math.max(0, t.cupo - t.pendiente))}</b> <span class="muted">disponible de ${cop(t.cupo)}</span></div>` : ''}
+          </div>
+          <div class="tj-botones"><button class="secondary" data-edit data-compra="${t.id}">+ Compra</button>
+            <button class="link" data-edit data-tarjeta="${t.id}">Editar tarjeta</button></div></div>
         ${t.pendientes.length ? `<div class="fila"><button class="link" data-hasta="${t.id}">Seleccionar lo vencido hasta ${MESES[mes - 1].toLowerCase()}</button>
             <button class="link" data-ninguna="${t.id}">Quitar selección</button></div>
           <table><thead><tr><th></th><th>Cobro</th><th>Compra</th><th>Cuota</th><th class="num">Capital</th><th class="num">Interés</th><th class="num">Valor</th></tr></thead>
@@ -243,12 +277,19 @@ export default {
       </section>`;
     };
 
-    const node = el(`<div>
-      <div class="fila"><span class="sp"></span>
-        <button class="secondary" data-edit id="nueva-tarjeta">+ Nueva tarjeta</button></div>
-      ${tarjetas.map(tarjetaHTML).join('') || '<div class="card"><p class="muted">Aún no hay tarjetas. Crea una y registra sus compras (con cuotas e intereses) para decidir qué pagar cada mes.</p></div>'}
-    </div>`);
-    node.querySelector('#nueva-tarjeta').onclick = () => nuevaTarjeta(rerender);
+    const detalle = abierta !== null ? tarjetas.find((t) => t.id === abierta) : null;
+    const node = el(detalle
+      ? `<div><div class="fila"><button class="link" id="volver">← Todas las tarjetas</button></div>${tarjetaHTML(detalle)}</div>`
+      : `<div><div class="tj-lista">${tarjetas.map((t) => dibujo(t)).join('')}
+          <button class="tj-nueva" data-edit id="nueva-tarjeta"><span>+</span>Nueva tarjeta</button></div>
+        ${tarjetas.length ? '<p class="muted">Haz clic en una tarjeta para ver sus cuotas, compras y pagos.</p>' : '<div class="card"><p class="muted">Aún no hay tarjetas. Crea una y registra sus compras (con cuotas e intereses) para decidir qué pagar cada mes.</p></div>'}</div>`);
+    node.querySelector('#nueva-tarjeta')?.addEventListener('click', () => nuevaTarjeta(rerender));
+    node.querySelector('#volver')?.addEventListener('click', () => { abierta = null; rerender(); });
+    node.querySelectorAll('[data-abrir]').forEach((c) => {
+      const abrir = () => { abierta = Number(c.dataset.abrir); rerender(); };
+      c.onclick = abrir;
+      c.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); abrir(); } };
+    });
 
     const actualizarSuma = (t) => {
       const sel = t.pendientes.filter((q) => seleccion.has(q.id));
@@ -256,7 +297,7 @@ export default {
       node.querySelector(`[data-n="${t.id}"]`).textContent = sel.length ? `(${sel.length} cuota${sel.length === 1 ? '' : 's'})` : '';
       node.querySelector(`[data-pagar="${t.id}"]`).disabled = !sel.length;
     };
-    for (const t of tarjetas) {
+    for (const t of detalle ? [detalle] : []) {
       node.querySelector(`[data-compra="${t.id}"]`).onclick = () => nuevaCompra(t.id, rerender);
       node.querySelector(`[data-tarjeta="${t.id}"]`).onclick = () => editarTarjeta(t, rerender);
       const comprasDe = repo.comprasTarjeta(t.id);

@@ -1,5 +1,7 @@
 import { describe, it, expect } from 'vitest';
 import {
+  haceTiempo, iconoGrupo,
+  iconoCaja,
   esExpresion, evaluarExpresion, formatoDinero,
   normalizar, coincide,
   neto, parseMonto, sumarPor, inicioMesSig, describirPago,
@@ -46,6 +48,18 @@ describe('saldo inicial encadenado', () => {
     expect(saldoInicial(datos, 2026, 10).valor).toBe(400);
     expect(saldoInicial(datos, 2026, 11).valor).toBe(300);
     expect(saldoInicial(datos, 2027, 1).valor).toBe(800);
+  });
+  it('los saldos iniciales de las cuentas son el punto de partida de la cadena', () => {
+    const d = { ...datos, base: 3000 };
+    expect(saldoInicial(d, 2026, 8)).toEqual({ valor: 3000, manual: false });
+    expect(saldoInicial(d, 2026, 9).valor).toBe(3600);
+    expect(saldoInicial(d, 2027, 1).valor).toBe(3800);
+  });
+  it('un saldo manual ignora la base: reinicia la cadena desde ese mes', () => {
+    const d = { ...datos, base: 3000, manual: { '2026-10': 5000 } };
+    expect(saldoInicial(d, 2026, 10)).toEqual({ valor: 5000, manual: true });
+    expect(saldoInicial(d, 2026, 11).valor).toBe(4900);
+    expect(saldoInicial({ ...datos, base: 3000, manual: { '2026-08': 700 } }, 2026, 9).valor).toBe(1300);
   });
   it('un saldo manual manda en su mes y reinicia la cadena hacia adelante', () => {
     const d = { ...datos, manual: { '2026-10': 5000 } };
@@ -402,5 +416,43 @@ describe('calculadora', () => {
     expect(formatoDinero(633333.33)).toBe('633.333,33');
     expect(formatoDinero(-12.5)).toBe('-12,5');
     expect(formatoDinero(0.05)).toBe('0,05');
+  });
+});
+
+describe('ícono de la caja según su nombre', () => {
+  it('reconoce palabras clave sin importar tildes ni mayúsculas', () => {
+    expect(iconoCaja('Cajita viaje')).toBe('✈️');
+    expect(iconoCaja('EMERGENCIAS')).toBe('🛡️');
+    expect(iconoCaja('Ganancias autopréstamos')).toBe('💰');
+    expect(iconoCaja('Educación hijos')).toBe('🎓');
+    expect(iconoCaja('Casa propia')).toBe('🏠');
+    expect(iconoCaja('Jubilación')).toBe('🏖️');
+  });
+  it('si no reconoce el nombre usa el cerdito', () => {
+    expect(iconoCaja('Cajita Nu')).toBe('🐷');
+    expect(iconoCaja('')).toBe('🐷');
+    expect(iconoCaja(undefined)).toBe('🐷');
+  });
+});
+
+describe('último registro: tiempo y íconos', () => {
+  const ahora = Date.parse('2026-10-19T15:00:00Z');
+  it('haceTiempo describe lo reciente y devuelve null si es viejo o no hay hora', () => {
+    expect(haceTiempo('2026-10-19T14:59:40Z', ahora)).toBe('hace unos segundos');
+    expect(haceTiempo('2026-10-19T14:56:00Z', ahora)).toBe('hace 4 min');
+    expect(haceTiempo('2026-10-19T12:30:00Z', ahora)).toBe('hace 3 h');
+    expect(haceTiempo('2026-10-17T12:30:00Z', ahora)).toBeNull();
+    expect(haceTiempo(null, ahora)).toBeNull();
+    expect(haceTiempo('basura', ahora)).toBeNull();
+    expect(haceTiempo('2026-10-19T15:05:00Z', ahora)).toBe('hace unos segundos');   // reloj adelantado: nunca negativo
+  });
+  it('iconoGrupo reconoce el grupo sin importar tildes y da prioridad al ahorro', () => {
+    expect(iconoGrupo('Alimentación')).toBe('🛒');
+    expect(iconoGrupo('Servicios')).toBe('💡');
+    expect(iconoGrupo('Deudas')).toBe('💳');
+    expect(iconoGrupo('Educación hijos')).toBe('🎓');
+    expect(iconoGrupo('Cosas varias')).toBe('🧾');
+    expect(iconoGrupo(null)).toBe('🧾');
+    expect(iconoGrupo('Hogar', 'Ahorro')).toBe('🐷');
   });
 });

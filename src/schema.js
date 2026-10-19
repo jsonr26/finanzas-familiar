@@ -228,4 +228,20 @@ export const MIGRATIONS = [
   );
   INSERT INTO compras_cubre (compra_id, concepto_id, monto) SELECT id, concepto_id, monto FROM compras_tarjeta WHERE concepto_id IS NOT NULL;
   `,
+  // v14: datos para dibujar la tarjeta: últimos 4 dígitos (solo esos), cupo (opcional) y color
+  `
+  ALTER TABLE tarjetas ADD COLUMN ultimos4 TEXT;
+  ALTER TABLE tarjetas ADD COLUMN cupo REAL;
+  ALTER TABLE tarjetas ADD COLUMN color TEXT;
+  `,
+  // v15: datos para dibujar la caja de ahorro: color y meta de ahorro (opcionales)
+  `
+  ALTER TABLE cajas_ahorro ADD COLUMN color TEXT;
+  ALTER TABLE cajas_ahorro ADD COLUMN meta REAL;
+  `,
+  // v16: momento en que se anotó cada movimiento o ingreso (para mostrar «último registro»); los anteriores quedan sin hora
+  `
+  ALTER TABLE movimientos ADD COLUMN creado_en TEXT;
+  ALTER TABLE ingresos ADD COLUMN creado_en TEXT;
+  `,
 ];

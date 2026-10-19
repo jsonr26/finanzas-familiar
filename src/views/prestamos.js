@@ -3,10 +3,13 @@ import { cop, parseMonto, hoyISO, MESES, calendarioCuotas, vencimientoEnMes, eaA
 import { NU_TARJETA } from '../referencias.js';
 import { esc, el, formulario, confirmar, alerta, intentar } from '../ui.js';
 import { periodo } from '../periodo.js';
+import { PALETA } from '../colores.js';
 
 const seleccion = new Set();   // cuotas marcadas para pagar (de cualquier préstamo)
 const abiertos = new Set();    // préstamos con el calendario completo desplegado
 let verTodaLaProyeccion = false;
+let detalleId = null;         // préstamo cuyo detalle se está viendo (null = lista de tarjetas)
+const colorDe = (p) => PALETA[repo.COLORES_TARJETA[p.id % repo.COLORES_TARJETA.length]];
 
 const fechaCorta = (f) => { const [a, m, d] = f.split('-').map(Number); return `${d} ${MESES[m - 1].slice(0, 3).toLowerCase()} ${a}`; };
 const mesesHasta = (f) => { const h = new Date(); const [a, m] = f.split('-').map(Number); return (a - h.getFullYear()) * 12 + (m - 1 - h.getMonth()); };
@@ -163,6 +166,27 @@ export default {
     const vencido = proy.filter((m) => m.clave < hoyClave || m.vencidas).reduce((t, m) => t + (m.clave < hoyClave ? m.porPagar : m.cuotas.filter((q) => !q.pagada && q.vencimiento < hoy).reduce((s, q) => s + q.valor, 0)), 0);
     const filasProy = verTodaLaProyeccion ? proy : proy.slice(0, 24);
     const [aHoy, mHoy] = hoy.split('-').map(Number);
+    if (detalleId !== null && !prestamos.some((p) => p.id === detalleId)) detalleId = null;
+    const pagados = prestamos.filter((p) => p.estado !== 'activo');
+    const sinAnio = (f) => fechaCorta(f).replace(/ \d{4}$/, '');
+    /** La tarjeta del préstamo (o su miniatura para el detalle). Activos: lo que falta por devolver; pagados: lo prestado. */
+    const dibujo = (p, mini = false) => {
+      const vencidas = p.cuotas.filter((q) => !q.movimiento_id && q.vencimiento < hoy).length;
+      const activo = p.estado === 'activo';
+      if (mini) return `<div class="tj mini" style="--tj:${colorDe(p)}"><b>🏦 ${esc(p.nombre)}</b><span class="tj-num">${esc(p.origenes.map((o) => o.caja).join(' · '))}</span><span class="tj-deuda-mini">${cop(activo ? p.capital_pendiente : p.monto)}</span></div>`;
+      const avance = p.n_cuotas ? Math.round((p.pagadas / p.n_cuotas) * 100) : 0;
+      const tag = !activo ? '<span class="tj-tag verde">Pagado ✓</span>' : vencidas ? `<span class="tj-tag rojo">${vencidas} vencida${vencidas === 1 ? '' : 's'}</span>` : '';
+      return `<div class="tj prestamo ${activo ? '' : 'pagado'}" style="--tj:${colorDe(p)}" data-abrir="${p.id}" role="button" tabindex="0" aria-label="Abrir el detalle de ${esc(p.nombre)}">
+        ${tag}
+        <div class="tj-top ${tag ? 'con-tag' : ''}"><span class="tj-ico">🏦</span><b>${esc(p.nombre)}</b></div>
+        <div class="tj-de">Sale de: ${esc(p.origenes.map((o) => o.caja).join(' · '))}</div>
+        <div class="tj-deuda"><small>${activo ? 'Falta por devolver' : 'Prestado'}</small><span>${cop(activo ? p.capital_pendiente : p.monto)}</span></div>
+        <div class="tj-pie">${activo
+          ? `<div><small>Cuota</small><b>${cop(p.cuota ?? 0)}</b></div>${p.proxima ? `<div><small>Próxima</small><b>${esc(sinAnio(p.proxima))}</b></div>` : ''}<div><small>Interés</small><b>${pctTxt(p.tasa_mensual)} % mes</b></div>`
+          : `<div><small>Intereses pagados</small><b>${cop(p.interes_pagado)}</b></div>`}</div>
+        <div class="tj-cupo" title="${avance} % pagado"><i style="width:${avance}%"></i></div>
+        <div class="tj-avt">${p.pagadas} de ${p.n_cuotas} cuotas pagadas</div></div>`;
+    };
 
     const prestamoHTML = (p) => {
       const pend = p.cuotas.filter((q) => !q.movimiento_id);
@@ -170,19 +194,18 @@ export default {
       const avance = p.n_cuotas ? Math.round((p.pagadas / p.n_cuotas) * 100) : 0;
       const m = p.proxima ? mesesHasta(p.ultima) : null;
       return `<section class="card" data-p="${p.id}">
-        <div class="fila"><h2>🏦 ${esc(p.nombre)}</h2>
-          <span class="tag ${p.estado === 'pagado' ? 'ingreso' : 'aviso'}">${p.estado === 'pagado' ? 'Pagado ✓' : 'Activo'}</span>
-          ${vencidas ? `<span class="tag vencido">${vencidas} vencida${vencidas === 1 ? '' : 's'}</span>` : ''}<span class="sp"></span>
-          ${pend.length ? '<button class="link" data-edit data-tasa>Cambiar tasa</button>' : ''}
-          ${p.pagadas ? '' : '<button class="link danger" data-edit data-eliminar>Eliminar</button>'}</div>
-        <p class="muted">Desembolso ${esc(fechaCorta(p.fecha_inicio))} · ${cop(p.monto)} (${p.origenes.map((o) => `${esc(o.caja)} ${cop(o.monto)}`).join(' · ')}) · ${pctTxt(p.tasa_mensual)} % mensual (${pctTxt(mensualAEa(p.tasa_mensual))} % EA) · ${p.plazo} cuotas</p>
-        <div class="progreso est-progreso"><i style="width:${avance}%"></i></div>
-        <div class="kpis kpis-chicos" style="margin-top:14px">
+        <div class="tj-detalle">${dibujo(p, true)}
+        <div class="kpis kpis-chicos">
           <div class="kpi"><small>Cuota</small><b>${cop(p.cuota ?? 0)}</b> <span class="muted">${p.pagadas}/${p.n_cuotas} pagadas</span></div>
           <div class="kpi gasto"><small>Falta por devolver (capital)</small><b>${cop(p.capital_pendiente)}</b></div>
           <div class="kpi"><small>Total por pagar (con interés)</small><b>${cop(p.valor_pendiente)}</b></div>
           <div class="kpi ahorro"><small>Termina de devolverse</small><b>${p.proxima ? esc(fechaCorta(p.ultima)) : '—'}</b> <span class="muted">${m === null ? '' : m <= 0 ? 'este mes' : `en ${m} mes${m === 1 ? '' : 'es'}`}</span></div>
         </div>
+        <div class="tj-botones">${vencidas ? `<span class="tag vencido">${vencidas} vencida${vencidas === 1 ? '' : 's'}</span>` : ''}
+          ${pend.length ? '<button class="secondary" data-edit data-tasa>Cambiar tasa</button>' : ''}
+          ${p.pagadas ? '' : '<button class="link danger" data-edit data-eliminar>Eliminar</button>'}</div></div>
+        <p class="muted">Desembolso ${esc(fechaCorta(p.fecha_inicio))} · ${cop(p.monto)} (${p.origenes.map((o) => `${esc(o.caja)} ${cop(o.monto)}`).join(' · ')}) · ${pctTxt(p.tasa_mensual)} % mensual (${pctTxt(mensualAEa(p.tasa_mensual))} % EA) · ${p.plazo} cuotas</p>
+        <div class="progreso est-progreso"><i style="width:${avance}%"></i></div>
         ${pend.length ? `<div class="fila"><button class="link" data-hasta>Seleccionar vencidas</button><button class="link" data-ninguna>Quitar selección</button></div>
           <table><thead><tr><th></th><th>Vence</th><th>Cuota</th><th class="num">Capital</th><th class="num">Interés</th><th class="num">Valor</th></tr></thead>
           <tbody>${pend.slice(0, abiertos.has(p.id) ? undefined : 6).map((q) => `<tr class="${q.vencimiento < hoy ? 'vencida' : ''}">
@@ -198,8 +221,10 @@ export default {
       </section>`;
     };
 
-    const node = el(`<div>
-      <div class="fila"><h2>Autopréstamos</h2><span class="sp"></span><button class="primary" data-edit id="nuevo">+ Nuevo autopréstamo</button></div>
+    const detalle = detalleId !== null ? prestamos.find((p) => p.id === detalleId) : null;
+    const node = el(detalle
+      ? `<div><div class="fila"><button class="link" id="volver">← Todos los autopréstamos</button></div>${prestamoHTML(detalle)}</div>`
+      : `<div>
       ${debeAhora > 0 ? `<div class="banner-pago"><span>⏰ Tienes <b>${cop(debeAhora)}</b> de autopréstamos por pagar hasta ${MESES[mHoy - 1]}${vencido > 0 ? ` (incluye <b>${cop(vencido)}</b> ya vencidos)` : ''}.</span>
         <button class="primary" data-edit id="pagar-ahora">Pagar ahora</button></div>` : ''}
       <div class="kpis">
@@ -209,6 +234,9 @@ export default {
         <div class="kpi"><small>Termina todo</small><b>${termina ? esc(fechaCorta(termina)) : '—'}</b></div>
         <div class="kpi ingreso"><small>En la caja de ganancias${ganancias ? ` · ${esc(ganancias.nombre)}` : ''}</small><b>${cop(ganancias?.saldo ?? 0)}</b></div>
       </div>
+      <div class="tj-lista">${activos.map((p) => dibujo(p)).join('')}<button class="tj-nueva" data-edit id="nuevo"><span>+</span>Nuevo autopréstamo</button></div>
+      ${pagados.length ? `<h3 class="tj-grupo">Pagados (${pagados.length})</h3><div class="tj-lista">${pagados.map((p) => dibujo(p)).join('')}</div>` : ''}
+      ${prestamos.length ? '<p class="muted">Haz clic en un autopréstamo para ver sus cuotas, pagarlas o cambiar la tasa.</p>' : '<div class="card"><p class="muted">Aún no hay autopréstamos. Crea uno eligiendo qué caja(s) prestan y con qué interés se devuelve.</p></div>'}
       ${proy.length ? `<div class="card"><div class="fila"><h2>📅 Proyección de pagos por mes</h2><span class="sp"></span><span class="muted">${proy.length} mes${proy.length === 1 ? '' : 'es'} · ${cop(proy.reduce((t, m) => t + m.porPagar, 0))} por pagar en total</span></div>
         <div style="overflow-x:auto"><table><thead><tr><th>Mes</th><th class="num">Cuotas</th><th class="num">Capital</th><th class="num">Interés</th><th class="num">Total del mes</th><th class="num">Por pagar</th><th class="num">Capital después</th><th></th><th></th></tr></thead>
         <tbody>${filasProy.map((m) => `<tr class="${m.estado === 'vencido' ? 'vencida' : ''}" data-mes="${m.clave}"><td><b>${MESES[m.mes - 1]} ${m.anio}</b></td><td class="num">${m.n}</td><td class="num">${cop(m.capital)}</td>
@@ -225,15 +253,20 @@ export default {
           <td class="num"><b>${cop(c.pendiente)}</b></td>
           <td>${c.termina ? esc(fechaCorta(c.termina)) : '<span class="pos">✓ al día</span>'}</td></tr>`).join('')}</tbody></table></div>
         <p class="muted">A estas cajas solo vuelve el capital. Los intereses (${cop(sum('interes_pagado'))} cobrados, ${cop(sum('interes_pendiente'))} por cobrar) van a la caja de ganancias.</p></div>` : ''}
-      ${prestamos.map(prestamoHTML).join('') || '<div class="card"><p class="muted">Aún no hay autopréstamos. Crea uno eligiendo qué caja(s) prestan y con qué interés se devuelve.</p></div>'}
     </div>`);
 
-    node.querySelector('#nuevo').onclick = () => nuevo(rerender);
+    node.querySelector('#nuevo')?.addEventListener('click', () => nuevo(rerender));
+    node.querySelector('#volver')?.addEventListener('click', () => { detalleId = null; rerender(); });
+    node.querySelectorAll('[data-abrir]').forEach((t) => {
+      const abrir = () => { detalleId = Number(t.dataset.abrir); rerender(); };
+      t.onclick = abrir;
+      t.onkeydown = (e) => { if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); abrir(); } };
+    });
     node.querySelector('#pagar-ahora')?.addEventListener('click', () => pagarMes(aHoy, mHoy, rerender));
     node.querySelectorAll('button[data-pagar-mes]').forEach((b) => (b.onclick = () => { const [a, m] = b.dataset.pagarMes.split('-').map(Number); pagarMes(a, m, rerender); }));
     node.querySelectorAll('button[data-detalle]').forEach((b) => (b.onclick = () => { const f = node.querySelector(`[data-det="${b.dataset.detalle}"]`); f.hidden = !f.hidden; }));
     node.querySelector('#ver-todo')?.addEventListener('click', () => { verTodaLaProyeccion = !verTodaLaProyeccion; rerender(); });
-    for (const p of prestamos) {
+    for (const p of detalle ? [detalle] : []) {
       const sec = node.querySelector(`[data-p="${p.id}"]`);
       const pend = p.cuotas.filter((q) => !q.movimiento_id);
       sec.querySelector('[data-eliminar]')?.addEventListener('click', async () => {

@@ -11,7 +11,7 @@ describe('db', () => {
     const bytes = exportBytes();
     await openDatabase(bytes);
     expect(get('SELECT nombre FROM conceptos').nombre).toBe('Arriendo');
-    expect(get('PRAGMA user_version').user_version).toBe(13);
+    expect(get('PRAGMA user_version').user_version).toBe(16);
   });
   it('bloquea escrituras en solo lectura', async () => {
     await openDatabase(null);

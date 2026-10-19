@@ -90,21 +90,41 @@ export function guardarIngreso(x) {
     run(`UPDATE ingresos SET anio=?, mes=?, quincena=?, persona_id=?, concepto_id=?, clase=?, monto=?, nota=?, cuenta_id=? WHERE id=?`, [...v, x.id]);
     return x.id;
   }
-  return run(`INSERT INTO ingresos (anio, mes, quincena, persona_id, concepto_id, clase, monto, nota, cuenta_id) VALUES (?,?,?,?,?,?,?,?,?)`, v);
+  return run(`INSERT INTO ingresos (anio, mes, quincena, persona_id, concepto_id, clase, monto, nota, cuenta_id, creado_en) VALUES (?,?,?,?,?,?,?,?,?,?)`, [...v, ahoraISO()]);
 }
+/** Momento actual en ISO (UTC): se guarda en `creado_en` al anotar un movimiento o un ingreso. */
+const ahoraISO = () => new Date().toISOString();
+
 export const eliminarIngreso = (id) => run('DELETE FROM ingresos WHERE id=?', [id]);
 
 /** Copia las líneas del mes anterior (solo de conceptos activos) a un mes que aún no tiene ingresos. */
 export function copiarIngresos(anio, mes) {
   if (ingresosMes(anio, mes).length) throw new Error('Este mes ya tiene ingresos registrados.');
   const ant = mesAnterior(anio, mes);
-  run(`INSERT INTO ingresos (anio, mes, persona_id, concepto_id, clase, monto, nota, quincena, cuenta_id)
-       SELECT ?, ?, i.persona_id, i.concepto_id, i.clase, i.monto, i.nota, i.quincena, i.cuenta_id
+  run(`INSERT INTO ingresos (anio, mes, persona_id, concepto_id, clase, monto, nota, quincena, cuenta_id, creado_en)
+       SELECT ?, ?, i.persona_id, i.concepto_id, i.clase, i.monto, i.nota, i.quincena, i.cuenta_id, ?
          FROM ingresos i JOIN conceptos c ON c.id = i.concepto_id
-        WHERE i.anio = ? AND i.mes = ? AND c.activo = 1`, [anio, mes, ant.anio, ant.mes]);
+        WHERE i.anio = ? AND i.mes = ? AND c.activo = 1`, [anio, mes, ahoraISO(), ant.anio, ant.mes]);
   const n = get('SELECT changes() AS n').n;
   if (!n) throw new Error('El mes anterior no tiene ingresos para copiar.');
   return n;
+}
+
+/**
+ * El último movimiento o ingreso anotado (por `creado_en`; los viejos sin hora cuentan como anteriores a los nuevos y entre
+ * sí se ordenan por id). Devuelve { tipo: 'movimiento'|'ingreso', id, anio, mes, fecha, concepto, monto, cuenta, clase, creado_en } o null.
+ */
+export function ultimoRegistro() {
+  const mov = get(`SELECT m.id, m.fecha, c.nombre AS concepto, m.monto, cu.nombre AS cuenta, m.creado_en FROM movimientos m
+      JOIN conceptos c ON c.id = m.concepto_id LEFT JOIN cuentas cu ON cu.id = m.cuenta_id
+     ORDER BY COALESCE(m.creado_en, '') DESC, m.id DESC LIMIT 1`);
+  const ing = get(`SELECT i.id, i.anio, i.mes, i.clase, c.nombre AS concepto, i.monto, cu.nombre AS cuenta, i.creado_en FROM ingresos i
+      JOIN conceptos c ON c.id = i.concepto_id LEFT JOIN cuentas cu ON cu.id = i.cuenta_id
+     ORDER BY COALESCE(i.creado_en, '') DESC, i.id DESC LIMIT 1`);
+  const m = mov ? { tipo: 'movimiento', ...mov, anio: Number(mov.fecha.slice(0, 4)), mes: Number(mov.fecha.slice(5, 7)) } : null;
+  const i = ing ? { tipo: 'ingreso', ...ing, fecha: null } : null;
+  if (!m || !i) return m ?? i;
+  return (i.creado_en ?? '') > (m.creado_en ?? '') ? i : m;
 }
 
 /** Saldo con el que arranca el mes: el escrito a mano o, si no hay, el que arrastran los meses previos. */
@@ -116,8 +136,15 @@ function mapasHistoricos() {
   }
   for (const r of all('SELECT substr(fecha, 1, 7) AS k, SUM(monto) AS t FROM movimientos GROUP BY k')) gasto[r.k] = r.t;
   for (const r of all('SELECT anio, mes, saldo_anterior AS s FROM saldos_mes')) manual[claveMes(r.anio, r.mes)] = r.s;
-  return { neto, gasto, manual };
+  return { neto, gasto, manual, base: saldoBaseCuentas() };
 }
+/**
+ * Suma de los saldos iniciales de las cuentas que cuenta la vista Cuentas (activas o con movimientos): es con lo
+ * que arranca la cadena de saldos de Mes, Inicio, Resumen anual y la proyección.
+ */
+export const saldoBaseCuentas = () => get(
+  `SELECT COALESCE(SUM(saldo_inicial), 0) AS t FROM cuentas c
+    WHERE activo = 1 OR EXISTS (SELECT 1 FROM ingresos WHERE cuenta_id = c.id) OR EXISTS (SELECT 1 FROM movimientos WHERE cuenta_id = c.id)`).t;
 export const saldoAnteriorInfo = (anio, mes) => saldoInicial(mapasHistoricos(), anio, mes);
 export const saldoAnterior = (anio, mes) => saldoAnteriorInfo(anio, mes).valor;
 export const guardarSaldoAnterior = (anio, mes, s) =>
@@ -138,7 +165,7 @@ export function guardarMovimiento(x) {
   return transaction(() => {
     let id = x.id;
     if (id) run(`UPDATE movimientos SET fecha=?, concepto_id=?, persona_id=?, monto=?, nota=?, cuenta_id=? WHERE id=?`, [...v, id]);
-    else id = run(`INSERT INTO movimientos (fecha, concepto_id, persona_id, monto, nota, cuenta_id) VALUES (?,?,?,?,?,?)`, v);
+    else id = run(`INSERT INTO movimientos (fecha, concepto_id, persona_id, monto, nota, cuenta_id, creado_en) VALUES (?,?,?,?,?,?,?)`, [...v, ahoraISO()]);
     sincronizarCajaDelMovimiento(id, x);
     return id;
   });
@@ -340,20 +367,33 @@ export function saldosCuentas(anio, mes) {
 
 // --- Tarjetas de crédito -----------------------------------------------------------------
 /** Crea la tarjeta y su concepto de gasto «Tarjeta X» (grupo Deudas), que recibe los pagos. */
-export function crearTarjeta({ nombre, cuenta_id, fecha_pago }) {
+export const COLORES_TARJETA = ['verde', 'morado', 'azul', 'coral', 'rosa', 'gris', 'ambar'];   // también los de las cajas de ahorro
+/** Valida y normaliza los datos opcionales que se dibujan en la tarjeta: últimos 4 dígitos, cupo y color. */
+function datosTarjeta({ ultimos4, cupo, color }) {
+  const d = String(ultimos4 ?? '').trim();
+  if (d && !/^\d{4}$/.test(d)) throw new Error('Los últimos dígitos deben ser exactamente 4 números.');
+  const c = cupo === '' || cupo === null || cupo === undefined ? null : Number(cupo);
+  if (c !== null && !(Number.isFinite(c) && c >= 0)) throw new Error('El cupo debe ser un número de 0 o más.');
+  if (color && !COLORES_TARJETA.includes(color)) throw new Error('Color de tarjeta no válido.');
+  return [d || null, c || null, color || null];
+}
+
+export function crearTarjeta({ nombre, cuenta_id, fecha_pago, ultimos4, cupo, color }) {
   const n = nombre.trim();
+  const extra = datosTarjeta({ ultimos4, cupo, color });
   return transaction(() => {
     const concepto = guardarConcepto({ tipo: 'gasto_fijo', nombre: `Tarjeta ${n}`, grupo: 'Deudas', presupuestado: true, fecha_pago: fecha_pago || null, periodicidad: 'mensual' });
-    return run('INSERT INTO tarjetas (nombre, concepto_id, cuenta_id) VALUES (?,?,?)', [n, concepto, cuenta_id || null]);
+    return run('INSERT INTO tarjetas (nombre, concepto_id, cuenta_id, ultimos4, cupo, color) VALUES (?,?,?,?,?,?)', [n, concepto, cuenta_id || null, ...extra]);
   });
 }
 /** Cambia nombre, cuenta de pago sugerida y fecha de pago; el concepto «Tarjeta X» se renombra con ella. */
-export function actualizarTarjeta({ id, nombre, cuenta_id, fecha_pago }) {
+export function actualizarTarjeta({ id, nombre, cuenta_id, fecha_pago, ultimos4, cupo, color }) {
   const t = get('SELECT * FROM tarjetas WHERE id=?', [id]);
   if (!t) throw new Error('Tarjeta no encontrada.');
   const n = nombre.trim();
+  const extra = datosTarjeta({ ultimos4, cupo, color });
   transaction(() => {
-    run('UPDATE tarjetas SET nombre=?, cuenta_id=? WHERE id=?', [n, cuenta_id || null, id]);
+    run('UPDATE tarjetas SET nombre=?, cuenta_id=?, ultimos4=?, cupo=?, color=? WHERE id=?', [n, cuenta_id || null, ...extra, id]);
     const fecha = fecha_pago || null;
     run('UPDATE conceptos SET nombre=?, fecha_pago=?, dia_pago=? WHERE id=?',
       [`Tarjeta ${n}`, fecha, fecha ? Number(fecha.slice(8, 10)) : null, t.concepto_id]);
@@ -361,7 +401,9 @@ export function actualizarTarjeta({ id, nombre, cuenta_id, fecha_pago }) {
 }
 
 export const tarjetas = () => all(
-  `SELECT t.*, COALESCE(SUM(CASE WHEN q.id IS NOT NULL AND q.movimiento_id IS NULL THEN q.valor END), 0) AS pendiente
+  `SELECT t.*, (SELECT fecha_pago FROM conceptos WHERE id = t.concepto_id) AS fecha_pago,
+          (SELECT nombre FROM cuentas WHERE id = t.cuenta_id) AS cuenta,
+          COALESCE(SUM(CASE WHEN q.id IS NOT NULL AND q.movimiento_id IS NULL THEN q.valor END), 0) AS pendiente
      FROM tarjetas t LEFT JOIN compras_tarjeta ct ON ct.tarjeta_id = t.id LEFT JOIN cuotas_tarjeta q ON q.compra_id = ct.id
     WHERE t.activo = 1 GROUP BY t.id ORDER BY t.nombre`);
 
@@ -567,10 +609,20 @@ export function resumenAnual(anio) {
 // --- Cajas de ahorro (informativas: no tocan movimientos ni cuentas) ----------------------------------
 const signo = (m) => (m.tipo === 'retiro' ? -m.monto : m.monto);
 
+/** Color y meta de una caja; si no vienen en `c` se conservan los que ya tenía (`previo`). */
+function datosCaja(c, previo = {}) {
+  const color = c.color === undefined ? previo.color ?? null : c.color || null;
+  if (color && !COLORES_TARJETA.includes(color)) throw new Error('Color de caja no válido.');
+  const meta = c.meta === undefined ? previo.meta ?? null : c.meta === '' || c.meta === null ? null : Number(c.meta);
+  if (meta !== null && !(Number.isFinite(meta) && meta >= 0)) throw new Error('La meta debe ser un número de 0 o más.');
+  return [color, meta || null];
+}
+
 export function guardarCaja(c) {
-  const v = [c.nombre.trim(), c.banco?.trim() || null, c.activo === false ? 0 : 1];
-  if (c.id) { run('UPDATE cajas_ahorro SET nombre=?, banco=?, activo=? WHERE id=?', [...v, c.id]); return c.id; }
-  return run('INSERT INTO cajas_ahorro (nombre, banco, activo) VALUES (?,?,?)', v);
+  const previo = c.id ? get('SELECT color, meta FROM cajas_ahorro WHERE id=?', [c.id]) ?? {} : {};
+  const v = [c.nombre.trim(), c.banco?.trim() || null, c.activo === false ? 0 : 1, ...datosCaja(c, previo)];
+  if (c.id) { run('UPDATE cajas_ahorro SET nombre=?, banco=?, activo=?, color=?, meta=? WHERE id=?', [...v, c.id]); return c.id; }
+  return run('INSERT INTO cajas_ahorro (nombre, banco, activo, color, meta) VALUES (?,?,?,?,?)', v);
 }
 
 export function eliminarCaja(id) {
