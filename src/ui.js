@@ -1,5 +1,6 @@
 // Utilidades de interfaz (solo dependen de calc.js, que es lógica pura).
-import { formatearEntrada, coincide } from './calc.js';
+import { formatearEntrada, coincide, esExpresion, evaluarExpresion, formatoDinero } from './calc.js';
+import { abrirCalculadora } from './calculadora.js';
 export const esc = (v) => String(v ?? '').replace(/[&<>"']/g, (c) => ({ '&': '&amp;', '<': '&lt;', '>': '&gt;', '"': '&quot;', "'": '&#39;' })[c]);
 
 export function el(html) {
@@ -16,7 +17,7 @@ export const opciones = (items, valor, { vacio } = {}) =>
  * Formulario modal.
  * campos: [{name,label,type:'text'|'number'|'date'|'select'|'buscar'|'checkbox'|'money'|'decimal'|'textarea'|'lista-monto', value, options, required, placeholder}]
  * `buscar` es un `select` con buscador (mismas `options`, `vacio`, `agregar`): se escribe para filtrar, flechas/Enter para elegir.
- * `money` da formato de miles al escribir; `decimal` es un número libre (tasas, porcentajes).
+ * `money` da formato de miles al escribir y acepta operaciones (`1.200.000 + 350.000 * 2`, Enter las convierte en su resultado; el botón 🧮 aparece al editar el campo); `decimal` es un número libre (tasas, porcentajes).
  * `lista-monto` ({items:[{id,label,sugerido}], value:[{id,monto}]}): lista con buscador de casillas, cada una con su monto; devuelve [{id, monto}] (monto como texto) solo de las marcadas.
  * `vistaPrevia(valores)` devuelve HTML que se actualiza en vivo debajo de los campos (o '' para ocultarlo).
  * Devuelve una promesa con el objeto de valores, o null si se cancela.
@@ -43,16 +44,31 @@ export function formulario({ titulo, campos, textoOk = 'Guardar', extra = '', ot
     }
     dlg.querySelector('[value=cancel]').onclick = () => cerrar(null);
     dlg.addEventListener('cancel', (e) => { e.preventDefault(); cerrar(null); });
+    // --- Campos de dinero: aceptan operaciones; Enter, «=» o salir del campo las convierten en su resultado ---
+    const pistaDinero = (inp) => {
+      const hint = inp.closest('.dinero')?.querySelector('.calc-hint');
+      if (!hint) return;
+      if (!esExpresion(inp.value)) { hint.hidden = true; return; }
+      try { hint.textContent = `= $ ${formatoDinero(evaluarExpresion(inp.value))} · Enter para aplicar`; hint.classList.remove('err'); }
+      catch (e) { hint.textContent = e.message; hint.classList.add('err'); }
+      hint.hidden = false;
+    };
+    const aplicarDinero = (inp) => {
+      if (!esExpresion(inp.value)) return true;
+      try { inp.value = formatoDinero(evaluarExpresion(inp.value)); pistaDinero(inp); return true; } catch { return false; }
+    };
+    const valorDinero = (txt) => { if (!esExpresion(txt)) return txt; try { return formatoDinero(evaluarExpresion(txt)); } catch { return txt; } };
     const leer = () => {
       const out = {};
       for (const c of campos) {
         if (c.type === 'lista-monto') {
           out[c.name] = [...form.querySelectorAll(`[data-lm="${c.name}"] .lm-fila`)].filter((f) => f.querySelector('[data-lm-chk]').checked)
-            .map((f) => ({ id: Number(f.dataset.id), monto: f.querySelector('[data-lm-monto]').value }));
+            .map((f) => ({ id: Number(f.dataset.id), monto: valorDinero(f.querySelector('[data-lm-monto]').value) }));
           continue;
         }
         const inp = form.elements[c.name];
         if (c.type === 'checkbox') out[c.name] = inp.checked;
+        else if (c.type === 'money') out[c.name] = valorDinero(inp.value);
         else out[c.name] = c.agregar && inp.value === NUEVO ? form.elements[`${c.name}__nuevo`].value.trim() : inp.value;
       }
       return out;
@@ -127,7 +143,9 @@ export function formulario({ titulo, campos, textoOk = 'Guardar', extra = '', ot
         inp.closest('.lista-monto').querySelectorAll('.lm-fila').forEach((f) => { f.hidden = !!q && !f.dataset.q.includes(q); });
         return;
       }
+      if (inp.dataset.fmt === 'money' && esExpresion(inp.value)) { pistaDinero(inp); actualizarPrevia(); return; }   // una operación se deja tal cual
       if (inp.dataset.fmt === 'money') {   // formato de miles conservando la posición del cursor
+        pistaDinero(inp);
         const digitosAntes = inp.value.slice(0, inp.selectionStart).replace(/[^\d,]/g, '').length;
         inp.value = formatearEntrada(inp.value);
         let n = 0, i = 0;
@@ -136,7 +154,22 @@ export function formulario({ titulo, campos, textoOk = 'Guardar', extra = '', ot
       }
       actualizarPrevia();
     });
-    form.addEventListener('keydown', (e) => { if (e.key === 'Enter' && e.target.matches?.('[data-lm-buscar]')) e.preventDefault(); });
+    form.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && e.target.matches?.('[data-lm-buscar]')) e.preventDefault();
+      if ((e.key === 'Enter' || e.key === '=') && e.target.matches?.('[data-fmt="money"]') && esExpresion(e.target.value)) {
+        e.preventDefault();   // aplica el resultado en vez de enviar el formulario
+        aplicarDinero(e.target); actualizarPrevia();
+      }
+    });
+    form.addEventListener('focusout', (e) => {
+      if (e.target.matches?.('[data-fmt="money"]') && esExpresion(e.target.value) && aplicarDinero(e.target)) actualizarPrevia();
+    });
+    form.addEventListener('click', (e) => {
+      const btn = e.target.closest?.('.calc-btn');
+      if (!btn) return;
+      const inp = btn.closest('.dinero').querySelector('input');
+      abrirCalculadora({ inicial: inp.value, alUsar: (texto) => { inp.value = texto; inp.dispatchEvent(new Event('input', { bubbles: true })); inp.focus(); } });
+    });
     form.addEventListener('change', (e) => {
       if (e.target.matches?.('[data-lm-chk]')) {   // al marcar, el monto se sugiere (editable); al desmarcar se limpia
         const m = e.target.closest('.lm-fila').querySelector('[data-lm-monto]');
@@ -150,6 +183,13 @@ export function formulario({ titulo, campos, textoOk = 'Guardar', extra = '', ot
     actualizarPrevia();
     form.onsubmit = (e) => {
       e.preventDefault();
+      const mala = [...form.querySelectorAll('[data-fmt="money"]')].find((i) => esExpresion(i.value) && !aplicarDinero(i));
+      if (mala) {
+        const err = form.querySelector('.err');
+        err.textContent = 'Revisa la operación escrita en el campo de dinero.'; err.hidden = false;
+        mala.focus();
+        return;
+      }
       const out = leer();
       const falta = campos.find((c) => c.type === 'buscar' && c.required && !out[c.name]);
       if (falta) {
@@ -191,7 +231,8 @@ function controlHTML(c) {
     case 'checkbox': return `<input type="checkbox" ${base} ${c.value ? 'checked' : ''}>`;
     case 'money': {
       const v = c.value === undefined || c.value === null || c.value === '' ? '' : formatearEntrada(String(c.value).replace('.', ','));
-      return `<input ${base} data-fmt="money" inputmode="decimal" autocomplete="off" value="${esc(v)}" placeholder="${esc(c.placeholder ?? '0')}">`;
+      return `<div class="dinero"><input ${base} data-fmt="money" inputmode="decimal" autocomplete="off" value="${esc(v)}" placeholder="${esc(c.placeholder ?? '0')}">
+        <button type="button" class="calc-btn" tabindex="-1" title="Calculadora" aria-label="Abrir la calculadora">🧮</button><small class="calc-hint" hidden></small></div>`;
     }
     case 'lista-monto': {
       const marcados = new Map((c.value ?? []).map((x) => [Number(x.id), x.monto]));

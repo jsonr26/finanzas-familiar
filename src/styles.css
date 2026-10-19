@@ -256,3 +256,24 @@ dialog.paleta input { width:100%; font-size:16px; }
 .side .tema-btn:hover { background:var(--hover); color:var(--ink); }
 .app.colapsada .side .tema-btn { justify-content:center; padding:10px 0; }
 @media (max-width:900px) { .side .tema-btn { justify-content:center; padding:10px 0; } }
+
+/* Campo de dinero con operaciones y calculadora */
+.dinero { display:flex; flex-wrap:wrap; gap:6px; align-items:center; }
+.dinero input { flex:1; min-width:0; }
+.calc-btn { display:none; background:none; border:1px solid var(--line); border-radius:10px; padding:7px 9px; cursor:pointer; line-height:1; }
+.calc-btn:hover { background:var(--hover); }
+.dinero:focus-within .calc-btn { display:inline-block; }
+.calc-hint { flex-basis:100%; color:var(--muted); font-weight:400; font-size:12.5px; }
+.calc-hint.err { color:var(--bad); }
+dialog.calc { width:min(340px,92vw); }
+.calc-pantalla { width:100%; font-size:22px; text-align:right; font-variant-numeric:tabular-nums; }
+.calc-res { margin:6px 2px 10px; text-align:right; min-height:1.4em; font-variant-numeric:tabular-nums; }
+.calc-res.err { color:var(--bad); }
+.calc-teclas { display:grid; grid-template-columns:repeat(4,1fr); gap:8px; }
+.calc-t { padding:12px 0; border:1px solid var(--line); border-radius:12px; background:var(--card); color:var(--ink); font-size:17px; cursor:pointer; }
+.calc-t:hover { background:var(--hover); }
+.calc-t.op { background:var(--hover); color:var(--brand); }
+.calc-t.igual { grid-column:1 / -1; background:var(--brand); color:var(--brand-ink); border-color:transparent; font-weight:600; }
+.calc-hist { display:flex; flex-direction:column; gap:4px; margin-top:12px; max-height:120px; overflow-y:auto; }
+.calc-h { text-align:right; background:none; border:0; padding:3px 4px; border-radius:8px; cursor:pointer; color:var(--ink); font:inherit; font-size:13.5px; }
+.calc-h:hover { background:var(--hover); }

@@ -1,5 +1,6 @@
 import { describe, it, expect } from 'vitest';
 import {
+  esExpresion, evaluarExpresion, formatoDinero,
   normalizar, coincide,
   neto, parseMonto, sumarPor, inicioMesSig, describirPago,
   saldoInicial, aplicaEnMes, montoPrevisto, estadoPresupuesto, pendientesDePago, mesAnterior, sumarDias, proyectarMeses, calendarioCuotas, tasaVigente, estimarRendimiento, repartir, proyectarPagosPrestamos, seleccionarCuotasMes, cubiertosConTarjeta, activoEnMes, frecuenciaDe, desdeFrecuencia, eaAMensual, mensualAEa, formatearEntrada,
@@ -355,5 +356,51 @@ describe('búsqueda de conceptos', () => {
   it('una consulta vacía deja pasar todo', () => {
     expect(coincide('Cualquier cosa', '   ')).toBe(true);
     expect(coincide('Cualquier cosa', '')).toBe(true);
+  });
+});
+
+describe('calculadora', () => {
+  it('respeta la precedencia y los paréntesis', () => {
+    expect(evaluarExpresion('2+3*4')).toBe(14);
+    expect(evaluarExpresion('(2+3)*4')).toBe(20);
+    expect(evaluarExpresion('100-30-20')).toBe(50);
+    expect(evaluarExpresion('100/4/5')).toBe(5);
+  });
+  it('lee los números como en los campos de dinero (punto = miles, coma = decimal)', () => {
+    expect(evaluarExpresion('1.200.000 + 350.000 * 2')).toBe(1900000);
+    expect(evaluarExpresion('10,5*2')).toBe(21);
+    expect(evaluarExpresion('$ 1.000 × 3')).toBe(3000);
+    expect(evaluarExpresion('900.000 ÷ 3')).toBe(300000);
+  });
+  it('maneja negativos, signos y porcentaje', () => {
+    expect(evaluarExpresion('-5+8')).toBe(3);
+    expect(evaluarExpresion('10*-2')).toBe(-20);
+    expect(evaluarExpresion('1.000.000*5%')).toBe(50000);
+    expect(evaluarExpresion('(10+5)%')).toBe(0.15);
+    expect(evaluarExpresion('−4+10')).toBe(6);
+  });
+  it('redondea a 2 decimales', () => {
+    expect(evaluarExpresion('100/3')).toBe(33.33);
+    expect(evaluarExpresion('2/3*3')).toBe(2);
+  });
+  it('rechaza lo que no es una operación válida', () => {
+    for (const malo of ['', '2+', '(2+3', '2+3)', 'abc', '2**3', '5/0', '*5', '1+a', 'alert(1)']) {
+      expect(() => evaluarExpresion(malo), malo).toThrow();
+    }
+  });
+  it('esExpresion distingue una operación de un número (con o sin signo)', () => {
+    expect(esExpresion('1.234,56')).toBe(false);
+    expect(esExpresion('-50.000')).toBe(false);
+    expect(esExpresion('')).toBe(false);
+    expect(esExpresion('5-3')).toBe(true);
+    expect(esExpresion('(5)')).toBe(true);
+    expect(esExpresion('10%')).toBe(true);
+    expect(esExpresion('2×3')).toBe(true);
+  });
+  it('formatoDinero da miles con punto y coma decimal', () => {
+    expect(formatoDinero(1900000)).toBe('1.900.000');
+    expect(formatoDinero(633333.33)).toBe('633.333,33');
+    expect(formatoDinero(-12.5)).toBe('-12,5');
+    expect(formatoDinero(0.05)).toBe('0,05');
   });
 });

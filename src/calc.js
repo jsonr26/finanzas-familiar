@@ -318,3 +318,63 @@ export function coincide(texto, consulta) {
   const t = normalizar(texto);
   return palabras.every((w) => t.includes(w));
 }
+
+// --- Calculadora ---------------------------------------------------------------------------------
+/** ¿El texto es una operación (y no un número, con o sin «-» inicial)? */
+export const esExpresion = (txt) => /[+\-*/×÷−()%]/.test(String(txt ?? '').trim().replace(/^[-−]/, ''));
+
+/**
+ * Evalúa una operación con + − × ÷ (o * /), paréntesis y %, respetando la precedencia (sin eval). Los números se leen
+ * con las reglas de `parseMonto` (punto = miles, coma = decimal). `n%` vale n/100. Redondea a 2 decimales.
+ * Lanza Error con un mensaje para mostrar al usuario si la operación no es válida.
+ */
+export function evaluarExpresion(txt) {
+  const t = String(txt ?? '').replace(/×/g, '*').replace(/÷/g, '/').replace(/−/g, '-').replace(/[\s$]/g, '');
+  if (!t) throw new Error('Escribe una operación.');
+  let i = 0;
+  const malo = () => new Error('Revisa la operación.');
+  const numero = () => {
+    const m = /^[\d.,]+/.exec(t.slice(i));
+    if (!m) throw malo();
+    i += m[0].length;
+    const n = parseMonto(m[0]);
+    if (!Number.isFinite(n)) throw malo();
+    return n;
+  };
+  const primario = () => {
+    if (t[i] !== '(') return numero();
+    i++;
+    const v = suma();
+    if (t[i] !== ')') throw malo();
+    i++;
+    return v;
+  };
+  const factor = () => {
+    if (t[i] === '-') { i++; return -factor(); }
+    if (t[i] === '+') { i++; return factor(); }
+    let v = primario();
+    while (t[i] === '%') { i++; v /= 100; }
+    return v;
+  };
+  const termino = () => {
+    let v = factor();
+    while (t[i] === '*' || t[i] === '/') {
+      const op = t[i++], d = factor();
+      if (op === '/' && d === 0) throw new Error('No se puede dividir por cero.');
+      v = op === '*' ? v * d : v / d;
+    }
+    return v;
+  };
+  function suma() {
+    let v = termino();
+    while (t[i] === '+' || t[i] === '-') { const op = t[i++], d = termino(); v = op === '+' ? v + d : v - d; }
+    return v;
+  }
+  const r = suma();
+  if (i < t.length) throw malo();
+  if (!Number.isFinite(r)) throw malo();
+  return Math.round(r * 100) / 100;
+}
+
+/** Número → texto con el formato de los campos de dinero (miles con punto, coma decimal). */
+export const formatoDinero = (n) => formatearEntrada(String(n).replace('.', ','));
