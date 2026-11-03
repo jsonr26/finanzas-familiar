@@ -47,29 +47,29 @@ export default {
     const sig = mes === 12 ? { a: anio + 1, m: 1 } : { a: anio, m: mes + 1 };
     const saldoMes = repo.saldoAnteriorInfo(sig.a, sig.m).valor; // saldo de cierre según la vista Mes
     const hayAjuste = Math.round(r.total) !== Math.round(saldoMes);
-    const sinCuenta = r.sinCuenta.ingresos || r.sinCuenta.gastos;
+    const sinCuenta = r.sinCuenta.inicio || r.sinCuenta.ingresos || r.sinCuenta.gastos;
     const dif = (d) => (d === null ? '<span class="muted">—</span>' : Math.round(d) === 0 ? '<span class="pos">✓ cuadra</span>' : `<b class="neg">${cop(d)}</b>`);
 
     const node = el(`<div>
       <div class="fila"><span class="sp"></span>
         <button class="primary" data-edit id="nueva">+ Nueva cuenta</button></div>
       <div class="card">
-        <p class="muted">Saldo calculado = saldo inicial + ingresos netos − gastos, acumulados hasta el cierre de ${MESES[mes - 1]} ${anio}.
+        <p class="muted">Saldo al cierre = saldo inicial del mes (el cierre del mes anterior) + ingresos netos − gastos de ${MESES[mes - 1]} ${anio}.
           Anota el saldo real del banco para ver si falta registrar algo.</p>
-        <table><thead><tr><th>Cuenta</th><th class="num">Saldo inicial</th><th class="num">Ingresos</th><th class="num">Gastos</th>
-          <th class="num">Calculado</th><th class="num">Saldo real</th><th class="num">Diferencia</th><th></th></tr></thead>
+        <table><thead><tr><th>Cuenta</th><th class="num">Saldo inicial del mes</th><th class="num">Ingresos</th><th class="num">Gastos</th>
+          <th class="num">Saldo al cierre</th><th class="num">Saldo real</th><th class="num">Diferencia</th><th></th></tr></thead>
         <tbody>${r.cuentas.map((c) => `<tr class="${c.activo ? '' : 'baja'}">
           <td><b>${esc(c.nombre)}</b>${c.persona ? ` <span class="muted">· ${esc(c.persona)}</span>` : ''}${c.activo ? '' : ' <span class="tag">Inactiva</span>'}</td>
-          <td class="num">${cop(c.saldo_inicial)}</td><td class="num">${cop(c.ingresos)}</td><td class="num">${cop(c.gastos)}</td>
+          <td class="num">${cop(c.inicio)}</td><td class="num">${cop(c.ingresos)}</td><td class="num">${cop(c.gastos)}</td>
           <td class="num"><b>${cop(c.calculado)}</b></td>
           <td class="num">${c.real === null ? '<span class="muted">—</span>' : cop(c.real)} <button class="link" data-edit data-real="${c.id}">${c.real === null ? 'anotar' : 'editar'}</button></td>
           <td class="num">${dif(c.diferencia)}</td>
           <td class="num" data-edit><button class="link" data-editar="${c.id}">Editar</button>
             ${c.persona_id ? `<button class="link" data-asignar="${c.id}" title="Asigna a esta cuenta los ingresos y movimientos de ${esc(c.persona)} que no tienen cuenta">Asignar registros</button>` : ''}</td></tr>`).join('')
           || '<tr><td colspan="8" class="muted">Aún no hay cuentas. Crea la de cada banco (por ejemplo, Banco de Sindy y Banco de Jeisson).</td></tr>'}
-        ${sinCuenta ? `<tr><td><b>Sin cuenta asignada</b> <span class="tag aviso">revisar</span></td><td class="num">—</td><td class="num">${cop(r.sinCuenta.ingresos)}</td>
-          <td class="num">${cop(r.sinCuenta.gastos)}</td><td class="num"><b>${cop(r.sinCuenta.ingresos - r.sinCuenta.gastos)}</b></td><td colspan="3"></td></tr>` : ''}</tbody>
-        <tfoot><tr><td>Total</td><td class="num">${cop(r.cuentas.reduce((s, c) => s + c.saldo_inicial, 0))}</td>
+        ${sinCuenta ? `<tr><td><b>Sin cuenta asignada</b> <span class="tag aviso">revisar</span></td><td class="num">${cop(r.sinCuenta.inicio)}</td><td class="num">${cop(r.sinCuenta.ingresos)}</td>
+          <td class="num">${cop(r.sinCuenta.gastos)}</td><td class="num"><b>${cop(r.sinCuenta.inicio + r.sinCuenta.ingresos - r.sinCuenta.gastos)}</b></td><td colspan="3"></td></tr>` : ''}</tbody>
+        <tfoot><tr><td>Total</td><td class="num">${cop(r.cuentas.reduce((s, c) => s + c.inicio, 0) + r.sinCuenta.inicio)}</td>
           <td class="num">${cop(r.cuentas.reduce((s, c) => s + c.ingresos, 0) + r.sinCuenta.ingresos)}</td>
           <td class="num">${cop(r.cuentas.reduce((s, c) => s + c.gastos, 0) + r.sinCuenta.gastos)}</td>
           <td class="num">${cop(r.total)}</td><td colspan="3"></td></tr></tfoot></table>

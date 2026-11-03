@@ -350,18 +350,25 @@ export function asignarCuentaPorPersona(cuentaId) {
  * todavía no tiene cuenta, para que el total siga cuadrando con ingresos − gastos.
  */
 export function saldosCuentas(anio, mes) {
-  const ing = new Map(all(`SELECT cuenta_id, SUM(CASE WHEN clase = 'descuento' THEN -monto ELSE monto END) AS t
-                             FROM ingresos WHERE anio * 100 + mes <= ? GROUP BY cuenta_id`, [anio * 100 + mes]).map((r) => [r.cuenta_id, r.t]));
-  const gas = new Map(all('SELECT cuenta_id, SUM(monto) AS t FROM movimientos WHERE fecha < ? GROUP BY cuenta_id', [inicioMesSig(anio, mes)]).map((r) => [r.cuenta_id, r.t]));
+  const k = anio * 100 + mes, ini = inicioMes(anio, mes), sig = inicioMesSig(anio, mes);
+  // Por cuenta: lo acumulado antes del mes (arrastre) y lo del mes.
+  const ing = new Map(all(`SELECT cuenta_id, SUM(CASE WHEN anio * 100 + mes < ? THEN (CASE WHEN clase = 'descuento' THEN -monto ELSE monto END) ELSE 0 END) AS antes,
+                                  SUM(CASE WHEN anio * 100 + mes = ? THEN (CASE WHEN clase = 'descuento' THEN -monto ELSE monto END) ELSE 0 END) AS mes
+                             FROM ingresos WHERE anio * 100 + mes <= ? GROUP BY cuenta_id`, [k, k, k]).map((r) => [r.cuenta_id, r]));
+  const gas = new Map(all(`SELECT cuenta_id, SUM(CASE WHEN fecha < ? THEN monto ELSE 0 END) AS antes, SUM(CASE WHEN fecha >= ? THEN monto ELSE 0 END) AS mes
+                             FROM movimientos WHERE fecha < ? GROUP BY cuenta_id`, [ini, ini, sig]).map((r) => [r.cuenta_id, r]));
   const reales = new Map(all('SELECT cuenta_id, saldo FROM cuentas_saldos WHERE anio=? AND mes=?', [anio, mes]).map((r) => [r.cuenta_id, r.saldo]));
   const filas = cuentas(false).filter((c) => c.activo || ing.has(c.id) || gas.has(c.id)).map((c) => {
-    const ingresos = ing.get(c.id) ?? 0, gastos = gas.get(c.id) ?? 0;
-    const calculado = c.saldo_inicial + ingresos - gastos;
+    const i = ing.get(c.id), g = gas.get(c.id);
+    const inicio = c.saldo_inicial + (i?.antes ?? 0) - (g?.antes ?? 0);   // cierre del mes anterior
+    const ingresos = i?.mes ?? 0, gastos = g?.mes ?? 0;
+    const calculado = inicio + ingresos - gastos;
     const real = reales.get(c.id) ?? null;
-    return { ...c, ingresos, gastos, calculado, real, diferencia: real === null ? null : real - calculado };
+    return { ...c, inicio, ingresos, gastos, calculado, real, diferencia: real === null ? null : real - calculado };
   });
-  const sinCuenta = { ingresos: ing.get(null) ?? 0, gastos: gas.get(null) ?? 0 };
-  const total = filas.reduce((s, f) => s + f.calculado, 0) + sinCuenta.ingresos - sinCuenta.gastos;
+  const si = ing.get(null), sg = gas.get(null);
+  const sinCuenta = { inicio: (si?.antes ?? 0) - (sg?.antes ?? 0), ingresos: si?.mes ?? 0, gastos: sg?.mes ?? 0 };
+  const total = filas.reduce((t, f) => t + f.calculado, 0) + sinCuenta.inicio + sinCuenta.ingresos - sinCuenta.gastos;
   return { cuentas: filas, sinCuenta, total };
 }
 

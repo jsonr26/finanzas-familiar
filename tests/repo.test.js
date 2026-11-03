@@ -242,17 +242,22 @@ describe('repo', () => {
     repo.guardarMovimiento({ fecha: '2026-11-05', concepto_id: gasto, monto: 999, cuenta_id: bj }); // posterior al corte
 
     let r = repo.saldosCuentas(2026, 10);
-    expect(r.sinCuenta).toEqual({ ingresos: 1000, gastos: 300 });
-    expect(r.cuentas.find((c) => c.id === bj)).toMatchObject({ ingresos: 1800, gastos: 500, calculado: 1300 });
+    expect(r.sinCuenta).toEqual({ inicio: 700, ingresos: 0, gastos: 0 });
+    expect(r.cuentas.find((c) => c.id === bj)).toMatchObject({ inicio: 0, ingresos: 1800, gastos: 500, calculado: 1300 });
     expect(r.total).toBe(100 + 700 + 1300); // 2100 = inicial + ingresos − gastos
     expect(repo.saldoBaseCuentas()).toBe(100);
     expect(repo.saldoAnterior(2026, 11)).toBe(r.total); // el saldo de Mes al cierre de octubre incluye los saldos iniciales y cuadra con Cuentas
 
     expect(repo.asignarCuentaPorPersona(bs)).toBe(2);
     r = repo.saldosCuentas(2026, 10);
-    expect(r.sinCuenta).toEqual({ ingresos: 0, gastos: 0 });
+    expect(r.sinCuenta).toEqual({ inicio: 0, ingresos: 0, gastos: 0 });
     expect(r.cuentas.find((c) => c.id === bs).calculado).toBe(800);
     expect(r.total).toBe(2100);
+
+    // el saldo inicial de un mes es el cierre del anterior
+    const nov = repo.saldosCuentas(2026, 11);
+    expect(nov.cuentas.find((c) => c.id === bj)).toMatchObject({ inicio: 1300, ingresos: 0, gastos: 999, calculado: 301 });
+    expect(nov.total).toBe(2100 - 999);
 
     repo.guardarSaldoReal(bs, 2026, 10, 750);
     expect(repo.saldosCuentas(2026, 10).cuentas.find((c) => c.id === bs)).toMatchObject({ real: 750, diferencia: -50 });

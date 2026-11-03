@@ -219,14 +219,15 @@ export default {
         <span class="acc" data-edit><button class="link" data-ing="editar" data-id="${i.id}">Editar</button><button class="link danger" data-ing="borrar" data-id="${i.id}">Quitar</button></span>
         <span class="mo ${i.clase === 'descuento' ? 'neg' : ''}">${i.clase === 'descuento' ? '−' : ''}${cop(i.monto)}</span></div>`;
     };
+    const barraAgregarIng = '<div class="fila"><span class="sp"></span><button class="secondary" id="agregar-ing" data-edit>+ Agregar ingreso</button></div>';
     const tabIngresos = () => {
       if (!ingresos.length) {
         const ant = mesAnterior(anio, mes);
         const hayAnterior = repo.ingresosMes(ant.anio, ant.mes).length > 0;
-        return `<div class="vacio-mes"><p class="muted">Sin ingresos registrados este mes. Usa la barra de arriba${hayAnterior ? ' o copia los del mes anterior' : ''}.</p>
+        return `${barraAgregarIng}<div class="vacio-mes"><p class="muted">Sin ingresos registrados este mes. Usa la barra de arriba${hayAnterior ? ' o copia los del mes anterior' : ''}.</p>
           ${hayAnterior ? '<button class="secondary" id="copiar-ing" data-edit>Copiar del mes anterior</button>' : ''}</div>`;
       }
-      return `<div class="feed">${[1, 2].map((q) => { const l = ingresos.filter((i) => i.quincena === q); return l.length
+      return `${barraAgregarIng}<div class="feed">${[1, 2].map((q) => { const l = ingresos.filter((i) => i.quincena === q); return l.length
         ? `<div class="dia"><b>${q}ª quincena</b><span class="sp"></span><span>neto ${cop(neto(l).neto)}</span></div>${l.map(filaIng).join('')}` : ''; }).join('')}</div>
         <div class="feed-total"><span>Neto del mes</span><b>${cop(n.neto)}</b></div>`;
     };
@@ -271,6 +272,7 @@ export default {
     // --- Eventos ---
     node.querySelector('#detalle-btn').onclick = () => { verDetalle = !verDetalle; rerender(); };
     node.querySelectorAll('[data-tab]').forEach((b) => (b.onclick = () => { pestana = b.dataset.tab; rerender(); }));
+    node.querySelector('#agregar-ing')?.addEventListener('click', () => editarIngreso({}, rerender));
     node.querySelector('#copiar-ing')?.addEventListener('click', () => intentar(() => { repo.copiarIngresos(anio, mes); rerender(); }));
     node.querySelector('[data-pagar-prestamos]')?.addEventListener('click', () => pagarMes(anio, mes, rerender));
     node.querySelectorAll('button[data-pagar]').forEach((b) => (b.onclick = () => {
