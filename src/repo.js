@@ -870,13 +870,19 @@ export function cambiarTasaAutoprestamo(id, tasa_mensual) {
   });
 }
 
-/** Solo se puede eliminar un préstamo sin cuotas pagadas: devuelve el desembolso (quita los retiros) y su concepto. */
+/**
+ * Elimina un préstamo como si nunca hubiera existido: devuelve el desembolso (quita los retiros), borra sus pagos de cuotas
+ * (con los aportes que hicieron a las cajas y a la de ganancias), los pagos de conceptos que financió y su concepto.
+ * Con cuotas pagadas solo se permite si ya no falta nada por devolver (capital pendiente = 0).
+ */
 export function eliminarAutoprestamo(id) {
-  if (get('SELECT COUNT(*) AS n FROM cuotas WHERE prestamo_id=? AND movimiento_id IS NOT NULL', [id]).n) {
-    throw new Error('El préstamo ya tiene cuotas pagadas; quita primero esos pagos desde la vista Mes.');
+  const pagos = all('SELECT DISTINCT movimiento_id FROM cuotas WHERE prestamo_id=? AND movimiento_id IS NOT NULL', [id]).map((x) => x.movimiento_id);
+  if (pagos.length && get('SELECT COALESCE(SUM(capital), 0) AS t FROM cuotas WHERE prestamo_id=? AND movimiento_id IS NULL', [id]).t > 0.005) {
+    throw new Error('El préstamo ya tiene cuotas pagadas y aún falta por devolver: solo se puede eliminar cuando no falte nada (o quita antes esos pagos desde la vista Mes).');
   }
   const a = get('SELECT concepto_id FROM autoprestamos WHERE id=?', [id]);
   transaction(() => {
+    for (const m of pagos) eliminarMovimiento(m); // quita también los aportes de cada cuota a las cajas
     run('DELETE FROM cajas_movs WHERE autoprestamo_id=?', [id]);
     run('DELETE FROM movimientos WHERE autoprestamo_id=?', [id]); // los pagos que financió: el concepto vuelve a quedar por pagar
     run('DELETE FROM autoprestamos WHERE id=?', [id]); // cuotas y orígenes caen en cascada

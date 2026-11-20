@@ -452,6 +452,23 @@ describe('repo', () => {
       expect(repo.cajas().find((c) => c.id === a).saldo).toBe(3_000_000);
       expect(repo.conceptos().filter((c) => c.nombre.startsWith('Autopréstamo'))).toHaveLength(0);
     });
+
+    it('con pagos solo se elimina si no falta nada por devolver, y deja todo como antes', () => {
+      const id = crear();
+      const cuotas = repo.cuotasPrestamo(id);
+      repo.pagarCuotasPrestamo({ prestamo_id: id, ids: [cuotas[0].id], fecha: '2026-11-05' });
+      expect(() => repo.eliminarAutoprestamo(id)).toThrow(/falta por devolver/);
+      repo.pagarCuotasPrestamo({ prestamo_id: id, ids: cuotas.slice(1).map((q) => q.id), fecha: '2026-12-05' });
+      expect(repo.autoprestamos()[0].capital_pendiente).toBe(0);
+      repo.eliminarAutoprestamo(id);
+      expect(repo.autoprestamos()).toHaveLength(0);
+      expect(repo.movimientosMes(2026, 11)).toHaveLength(0);
+      expect(repo.movimientosMes(2026, 12)).toHaveLength(0);
+      expect(repo.cajas().find((c) => c.id === a).saldo).toBe(3_000_000);
+      expect(repo.cajas().find((c) => c.id === b).saldo).toBe(1_000_000);
+      expect(repo.gananciasActual()?.saldo ?? 0).toBe(0);
+      expect(repo.conceptos().filter((c) => c.nombre.startsWith('Autopréstamo'))).toHaveLength(0);
+    });
   });
 
   it('borrarTodo deja la base vacía, con los grupos base, y se puede volver a usar', () => {

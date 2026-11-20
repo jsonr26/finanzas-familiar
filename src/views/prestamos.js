@@ -216,7 +216,7 @@ export default {
         </div>
         <div class="tj-botones">${vencidas ? `<span class="tag vencido">${vencidas} vencida${vencidas === 1 ? '' : 's'}</span>` : ''}
           ${pend.length ? '<button class="secondary" data-edit data-tasa>Cambiar tasa</button>' : ''}
-          ${p.pagadas ? '' : '<button class="link danger" data-edit data-eliminar>Eliminar</button>'}</div></div>
+          ${p.pagadas && p.capital_pendiente > 0.005 ? '' : '<button class="link danger" data-edit data-eliminar>Eliminar</button>'}</div></div>
         <p class="muted">Desembolso ${esc(fechaCorta(p.fecha_inicio))} · ${cop(p.monto)} (${p.origenes.map((o) => `${esc(o.caja)} ${cop(o.monto)}`).join(' · ')}) · ${pctTxt(p.tasa_mensual)} % mensual (${pctTxt(mensualAEa(p.tasa_mensual))} % EA) · ${p.plazo} cuotas</p>
         ${p.financia.length ? `<p>💸 <b>Financió estos pagos</b> (sin cuenta): ${p.financia.map((x) => `${esc(x.concepto)} ${cop(x.monto)} <span class="muted">(${esc(fechaCorta(x.fecha))})</span>`).join(' · ')}</p>` : ''}
         <div class="progreso est-progreso"><i style="width:${avance}%"></i></div>
@@ -284,7 +284,7 @@ export default {
       const sec = node.querySelector(`[data-p="${p.id}"]`);
       const pend = p.cuotas.filter((q) => !q.movimiento_id);
       sec.querySelector('[data-eliminar]')?.addEventListener('click', async () => {
-        if (await confirmar(`¿Eliminar «${p.nombre}»? Se devuelve el desembolso a las cajas y se borra su calendario.`, 'Eliminar')) intentar(() => { repo.eliminarAutoprestamo(p.id); rerender(); });
+        if (await confirmar(`¿Eliminar «${p.nombre}»? Se devuelve el desembolso a las cajas y se borra su calendario${p.pagadas ? `, junto con ${p.pagadas} pago${p.pagadas === 1 ? '' : 's'} de cuotas (se quitan sus movimientos y los aportes que hicieron a las cajas)` : ''}. No se puede deshacer.`, 'Eliminar')) intentar(() => { repo.eliminarAutoprestamo(p.id); rerender(); });
       });
       if (pend.length) {
         sec.querySelector('[data-tasa]').onclick = () => cambiarTasa(p, pend, rerender);
