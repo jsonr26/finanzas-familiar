@@ -30,6 +30,7 @@ function resumenCalendario({ monto, cuotas, tasa, anio, mes, dia }) {
 
 async function nuevo(rerender) {
   const cajas = repo.cajas().filter((c) => c.saldo > 0);
+  const pagables = repo.conceptosCubribles().filter((c) => !c.caja_id).map((c) => ({ id: c.id, label: c.grupo ? `${c.grupo} · ${c.nombre}` : c.nombre, sugerido: c.monto_estimado || '' }));
   if (!cajas.length) return alerta('Ninguna caja tiene saldo. Registra aportes en Cajas de ahorro antes de prestar de ellas.');
   const v = await formulario({
     titulo: 'Nuevo autopréstamo',
@@ -41,14 +42,21 @@ async function nuevo(rerender) {
       { name: 'plazo', label: 'Número de cuotas', type: 'number', value: 12, min: 1, max: 120, required: true },
       { name: 'primera', label: 'Vence la 1ª cuota', type: 'date', value: hoyISO(), required: true },
       { name: 'cuenta_id', label: 'Cuenta desde la que se paga', type: 'select', options: cuentasOpc(), vacio: '—' },
+      ...(pagables.length ? [
+        { name: 'cubre', label: '¿Paga algo que tienes por pagar? (opcional)', type: 'lista-monto', items: pagables },
+        { name: 'fecha_pago', label: 'Fecha de esos pagos', type: 'date', value: hoyISO() },
+      ] : []),
     ],
     vistaPrevia: (v) => {
       const monto = cajas.reduce((t, c) => { const x = parseMonto(v[`caja_${c.id}`] || '0'); return t + (Number.isFinite(x) ? x : 0); }, 0);
       const [anio, mes] = (v.primera || '').split('-').map(Number);
-      return resumenCalendario({ monto, cuotas: Number(v.plazo), tasa: leerTasa(v.tasa), anio, mes, dia: v.primera });
+      const asignado = (v.cubre ?? []).reduce((t, x) => { const m = parseMonto(x.monto); return t + (Number.isFinite(m) ? m : 0); }, 0);
+      const cubreTxt = asignado ? `<p style="margin:6px 0 0">Paga conceptos por <b>${cop(asignado)}</b> · ${asignado > monto ? `<b class="neg">pasa por ${cop(asignado - monto)} del préstamo</b>` : `libre: <b>${cop(monto - asignado)}</b>`}</p>` : '';
+      return cubreTxt + resumenCalendario({ monto, cuotas: Number(v.plazo), tasa: leerTasa(v.tasa), anio, mes, dia: v.primera });
     },
     extra: `<p class="muted">Tasa de partida: la de la tarjeta de crédito de Nu (${pctTxt(NU_TARJETA.ea)} % EA ≈ ${pctTxt(eaAMensual(NU_TARJETA.ea))} % mensual;
       <a href="${NU_TARJETA.url}" target="_blank" rel="noopener">${esc(NU_TARJETA.fuente)}</a>). Cámbiala y el cálculo se actualiza al instante; confírmala en tu extracto.</p>
+      <p class="muted">Si el préstamo es para pagar algo que tienes en «Por pagar», márcalo y di cuánto paga: se registra ese pago como gasto del concepto, pero <b>sin cuenta</b> (la plata sale de la caja, no de tus cuentas, así que el saldo no baja). Las cuotas sí salen de la cuenta cuando las pagues.</p>
       <p class="muted">Se registra un retiro en cada caja y se crea el concepto «Autopréstamo …» (grupo Deudas) que recibe los pagos. Cada cuota pagada devuelve su parte (capital + interés) a cada caja.</p>`,
   });
   if (!v) return;
@@ -56,7 +64,12 @@ async function nuevo(rerender) {
     const origenes = cajas.map((c) => ({ caja_id: c.id, monto: v[`caja_${c.id}`].trim() ? parseMonto(v[`caja_${c.id}`]) : 0 }));
     const tasa = leerTasa(v.tasa);
     if (origenes.some((o) => !Number.isFinite(o.monto) || o.monto < 0) || !Number.isFinite(tasa)) throw new Error('Montos o interés no válidos.');
-    repo.crearAutoprestamo({ nombre: v.nombre, origenes, tasa_mensual: tasa, plazo: Number(v.plazo), fecha_inicio: v.fecha_inicio, primera: v.primera, cuenta_id: v.cuenta_id ? Number(v.cuenta_id) : null });
+    const cubre = (v.cubre ?? []).map((x) => {
+      const monto = parseMonto(x.monto);
+      if (!Number.isFinite(monto)) throw new Error('Indica cuánto del préstamo paga cada concepto marcado.');
+      return { concepto_id: x.id, monto };
+    });
+    repo.crearAutoprestamo({ nombre: v.nombre, origenes, tasa_mensual: tasa, plazo: Number(v.plazo), fecha_inicio: v.fecha_inicio, primera: v.primera, cuenta_id: v.cuenta_id ? Number(v.cuenta_id) : null, cubre, fecha_pago: v.fecha_pago || v.fecha_inicio });
     rerender();
   });
 }
@@ -152,7 +165,7 @@ export default {
   titulo: 'Autopréstamos',
   icono: '🏦',
   render(main, { rerender }) {
-    const prestamos = repo.autoprestamos().map((p) => ({ ...p, cuotas: repo.cuotasPrestamo(p.id) }));
+    const prestamos = repo.autoprestamos().map((p) => ({ ...p, cuotas: repo.cuotasPrestamo(p.id), financia: repo.pagosFinanciados(p.id) }));
     const porCaja = repo.prestamosPorCaja();
     for (const id of [...seleccion]) if (!prestamos.some((p) => p.cuotas.some((q) => q.id === id && !q.movimiento_id))) seleccion.delete(id);
     const activos = prestamos.filter((p) => p.estado === 'activo');
@@ -179,7 +192,7 @@ export default {
       return `<div class="tj prestamo ${activo ? '' : 'pagado'}" style="--tj:${colorDe(p)}" data-abrir="${p.id}" role="button" tabindex="0" aria-label="Abrir el detalle de ${esc(p.nombre)}">
         ${tag}
         <div class="tj-top ${tag ? 'con-tag' : ''}"><span class="tj-ico">🏦</span><b>${esc(p.nombre)}</b></div>
-        <div class="tj-de">Sale de: ${esc(p.origenes.map((o) => o.caja).join(' · '))}</div>
+        <div class="tj-de">Sale de: ${esc(p.origenes.map((o) => o.caja).join(' · '))}${p.financia.length ? ` · Paga: ${esc(p.financia.map((x) => x.concepto).join(', '))}` : ''}</div>
         <div class="tj-deuda"><small>${activo ? 'Falta por devolver' : 'Prestado'}</small><span>${cop(activo ? p.capital_pendiente : p.monto)}</span></div>
         <div class="tj-pie">${activo
           ? `<div><small>Cuota</small><b>${cop(p.cuota ?? 0)}</b></div>${p.proxima ? `<div><small>Próxima</small><b>${esc(sinAnio(p.proxima))}</b></div>` : ''}<div><small>Interés</small><b>${pctTxt(p.tasa_mensual)} % mes</b></div>`
@@ -205,6 +218,7 @@ export default {
           ${pend.length ? '<button class="secondary" data-edit data-tasa>Cambiar tasa</button>' : ''}
           ${p.pagadas ? '' : '<button class="link danger" data-edit data-eliminar>Eliminar</button>'}</div></div>
         <p class="muted">Desembolso ${esc(fechaCorta(p.fecha_inicio))} · ${cop(p.monto)} (${p.origenes.map((o) => `${esc(o.caja)} ${cop(o.monto)}`).join(' · ')}) · ${pctTxt(p.tasa_mensual)} % mensual (${pctTxt(mensualAEa(p.tasa_mensual))} % EA) · ${p.plazo} cuotas</p>
+        ${p.financia.length ? `<p>💸 <b>Financió estos pagos</b> (sin cuenta): ${p.financia.map((x) => `${esc(x.concepto)} ${cop(x.monto)} <span class="muted">(${esc(fechaCorta(x.fecha))})</span>`).join(' · ')}</p>` : ''}
         <div class="progreso est-progreso"><i style="width:${avance}%"></i></div>
         ${pend.length ? `<div class="fila"><button class="link" data-hasta>Seleccionar vencidas</button><button class="link" data-ninguna>Quitar selección</button></div>
           <table><thead><tr><th></th><th>Vence</th><th>Cuota</th><th class="num">Capital</th><th class="num">Interés</th><th class="num">Valor</th></tr></thead>

@@ -134,7 +134,7 @@ function mapasHistoricos() {
     const k = claveMes(r.anio, r.mes);
     neto[k] = (neto[k] ?? 0) + (r.clase === 'descuento' ? -r.t : r.t);
   }
-  for (const r of all('SELECT substr(fecha, 1, 7) AS k, SUM(monto) AS t FROM movimientos GROUP BY k')) gasto[r.k] = r.t;
+  for (const r of all('SELECT substr(fecha, 1, 7) AS k, SUM(monto) AS t FROM movimientos WHERE autoprestamo_id IS NULL GROUP BY k')) gasto[r.k] = r.t;
   for (const r of all('SELECT anio, mes, saldo_anterior AS s FROM saldos_mes')) manual[claveMes(r.anio, r.mes)] = r.s;
   return { neto, gasto, manual, base: saldoBaseCuentas() };
 }
@@ -164,6 +164,7 @@ export function guardarMovimiento(x) {
   const v = [x.fecha, x.concepto_id, x.persona_id || null, x.monto, x.nota || null, x.cuenta_id || null];
   return transaction(() => {
     let id = x.id;
+    if (id && get('SELECT autoprestamo_id FROM movimientos WHERE id=?', [id])?.autoprestamo_id) v[5] = null; // pagado con un autopréstamo: no sale de ninguna cuenta
     if (id) run(`UPDATE movimientos SET fecha=?, concepto_id=?, persona_id=?, monto=?, nota=?, cuenta_id=? WHERE id=?`, [...v, id]);
     else id = run(`INSERT INTO movimientos (fecha, concepto_id, persona_id, monto, nota, cuenta_id, creado_en) VALUES (?,?,?,?,?,?,?)`, [...v, ahoraISO()]);
     sincronizarCajaDelMovimiento(id, x);
@@ -205,6 +206,11 @@ export const ejecutadoPorConcepto = (anio, mes) => all(
   `SELECT c.id, c.nombre, c.grupo, c.categoria, SUM(m.monto) AS total FROM movimientos m
      JOIN conceptos c ON c.id = m.concepto_id
     WHERE m.fecha >= ? AND m.fecha < ? GROUP BY c.id ORDER BY c.grupo, c.nombre`, [inicioMes(anio, mes), inicioMesSig(anio, mes)]);
+
+/** Gasto del mes pagado con autopréstamos: cuenta en el presupuesto, pero no salió de las cuentas (no baja el saldo). */
+export const financiadoMes = (anio, mes) => get(
+  'SELECT COALESCE(SUM(monto), 0) AS t FROM movimientos WHERE autoprestamo_id IS NOT NULL AND fecha >= ? AND fecha < ?',
+  [inicioMes(anio, mes), inicioMesSig(anio, mes)]).t;
 
 // --- Presupuesto ---------------------------------------------------------------------
 /**
@@ -306,6 +312,7 @@ export function proyeccion(anio, mes, n = 6) {
     const lineas = ingresosPresupuestoMes(a, m);
     const hayPresupuesto = lineas.some((f) => f.previsto);
     const ingresos = hayPresupuesto ? lineas.reduce((t, f) => t + (f.tipo === 'descuento' ? -valor(f) : valor(f)), 0) : ultimo;
+    gastos = Math.max(0, gastos - financiadoMes(a, m)); // lo pagado con autopréstamo no sale de las cuentas
     meses.push({ anio: a, mes: m, ingresos, origen: hayPresupuesto ? 'presupuesto' : real ? 'real' : 'repetido', gastos, ahorro });
     ({ anio: a, mes: m } = m === 12 ? { anio: a + 1, mes: 1 } : { anio: a, mes: m + 1 });
   }
@@ -339,7 +346,7 @@ export function asignarCuentaPorPersona(cuentaId) {
   return transaction(() => {
     run('UPDATE ingresos SET cuenta_id=? WHERE cuenta_id IS NULL AND persona_id=?', [cuentaId, c.persona_id]);
     const ing = get('SELECT changes() AS n').n;
-    run('UPDATE movimientos SET cuenta_id=? WHERE cuenta_id IS NULL AND persona_id=?', [cuentaId, c.persona_id]);
+    run('UPDATE movimientos SET cuenta_id=? WHERE cuenta_id IS NULL AND persona_id=? AND autoprestamo_id IS NULL', [cuentaId, c.persona_id]);
     return ing + get('SELECT changes() AS n').n;
   });
 }
@@ -356,7 +363,7 @@ export function saldosCuentas(anio, mes) {
                                   SUM(CASE WHEN anio * 100 + mes = ? THEN (CASE WHEN clase = 'descuento' THEN -monto ELSE monto END) ELSE 0 END) AS mes
                              FROM ingresos WHERE anio * 100 + mes <= ? GROUP BY cuenta_id`, [k, k, k]).map((r) => [r.cuenta_id, r]));
   const gas = new Map(all(`SELECT cuenta_id, SUM(CASE WHEN fecha < ? THEN monto ELSE 0 END) AS antes, SUM(CASE WHEN fecha >= ? THEN monto ELSE 0 END) AS mes
-                             FROM movimientos WHERE fecha < ? GROUP BY cuenta_id`, [ini, ini, sig]).map((r) => [r.cuenta_id, r]));
+                             FROM movimientos WHERE fecha < ? AND autoprestamo_id IS NULL GROUP BY cuenta_id`, [ini, ini, sig]).map((r) => [r.cuenta_id, r]));
   const reales = new Map(all('SELECT cuenta_id, saldo FROM cuentas_saldos WHERE anio=? AND mes=?', [anio, mes]).map((r) => [r.cuenta_id, r.saldo]));
   const filas = cuentas(false).filter((c) => c.activo || ing.has(c.id) || gas.has(c.id)).map((c) => {
     const i = ing.get(c.id), g = gas.get(c.id);
@@ -701,11 +708,33 @@ export function gananciasActual() {
   return (id && cajas(false).find((c) => c.id === id)) || null;
 }
 
+/** Valida los conceptos que paga un autopréstamo: gastos que se puedan cubrir, sin caja propia, sin repetir, con monto > 0 y sin pasar del préstamo. */
+function validarCubreAutoprestamo(cubre, monto) {
+  const lista = (cubre ?? []).map((x) => ({ concepto_id: Number(x.concepto_id), monto: Number(x.monto) }));
+  if (!lista.length) return [];
+  const permitidos = new Set(conceptosCubribles().filter((c) => !c.caja_id).map((c) => c.id));
+  if (new Set(lista.map((x) => x.concepto_id)).size !== lista.length) throw new Error('Un concepto no puede aparecer dos veces en el mismo préstamo.');
+  for (const x of lista) {
+    if (!permitidos.has(x.concepto_id)) throw new Error('Ese concepto no se puede pagar con un autopréstamo (debe ser un gasto activo, no quincenal, ni de tarjeta, préstamo o caja de ahorro).');
+    if (!(x.monto > 0)) throw new Error('Indica cuánto del préstamo paga cada concepto (mayor que cero).');
+  }
+  const suma = lista.reduce((t, x) => t + x.monto, 0);
+  if (suma > monto + 0.005) throw new Error(`Los montos asignados (${Math.round(suma).toLocaleString('es-CO')}) superan el préstamo (${Math.round(monto).toLocaleString('es-CO')}).`);
+  return lista;
+}
+
+/** Pagos de conceptos financiados con un autopréstamo: [{movimiento_id, fecha, concepto, monto}]. */
+export const pagosFinanciados = (prestamoId) => all(
+  `SELECT m.id AS movimiento_id, m.fecha, c.nombre AS concepto, m.monto FROM movimientos m JOIN conceptos c ON c.id = m.concepto_id
+    WHERE m.autoprestamo_id = ? ORDER BY m.fecha, m.id`, [prestamoId]);
+
 /**
  * Crea el préstamo, su calendario de cuotas (cuota fija) y un retiro en cada caja que presta.
  * origenes: [{caja_id, monto}]; primera = fecha de la primera cuota (las demás, mes a mes).
+ * cubre: [{concepto_id, monto}] = conceptos «por pagar» que el préstamo paga en `fecha_pago` (por defecto, la del desembolso):
+ * cada uno queda como un movimiento sin cuenta (`movimientos.autoprestamo_id`): es gasto del concepto, pero no sale de las cuentas.
  */
-export function crearAutoprestamo({ nombre, origenes, tasa_mensual = 0, plazo, fecha_inicio, primera, cuenta_id }) {
+export function crearAutoprestamo({ nombre, origenes, tasa_mensual = 0, plazo, fecha_inicio, primera, cuenta_id, cubre = [], fecha_pago }) {
   const lista = origenes.filter((o) => o.monto > 0);
   if (!lista.length) throw new Error('Indica cuánto presta al menos una caja.');
   const monto = lista.reduce((t, o) => t + o.monto, 0);
@@ -719,6 +748,7 @@ export function crearAutoprestamo({ nombre, origenes, tasa_mensual = 0, plazo, f
     if (o.monto > c.saldo) throw new Error(`La caja «${c.nombre}» solo tiene ${Math.round(c.saldo).toLocaleString('es-CO')} de saldo.`);
   }
   const [a, m] = (primera || fecha_inicio).split('-').map(Number);
+  const pagos = validarCubreAutoprestamo(cubre, monto);
   return transaction(() => {
     const concepto = guardarConcepto({ tipo: 'gasto_fijo', nombre: `Autopréstamo ${nombre.trim()}`, grupo: 'Deudas', presupuestado: true, periodicidad: 'mensual' });
     const id = run(`INSERT INTO autoprestamos (nombre, monto, tasa_mensual, plazo, fecha_inicio, concepto_id, cuenta_id) VALUES (?,?,?,?,?,?,?)`,
@@ -731,6 +761,10 @@ export function crearAutoprestamo({ nombre, origenes, tasa_mensual = 0, plazo, f
     for (const q of calendarioCuotas({ monto, cuotas: n, tasaMensual: tasa_mensual, anio: a, mes: m })) {
       run('INSERT INTO cuotas (prestamo_id, numero, vencimiento, capital, interes, valor) VALUES (?,?,?,?,?,?)',
         [id, q.numero, vencimientoEnMes(primera || fecha_inicio, q.anio, q.mes), q.capital, q.interes, q.valor]);
+    }
+    for (const x of pagos) {
+      const mov = guardarMovimiento({ fecha: fecha_pago || fecha_inicio, concepto_id: x.concepto_id, monto: x.monto, cuenta_id: null, nota: `Financiado con el autopréstamo ${nombre.trim()}` });
+      run('UPDATE movimientos SET autoprestamo_id=? WHERE id=?', [id, mov]);
     }
     return id;
   });
@@ -844,6 +878,7 @@ export function eliminarAutoprestamo(id) {
   const a = get('SELECT concepto_id FROM autoprestamos WHERE id=?', [id]);
   transaction(() => {
     run('DELETE FROM cajas_movs WHERE autoprestamo_id=?', [id]);
+    run('DELETE FROM movimientos WHERE autoprestamo_id=?', [id]); // los pagos que financió: el concepto vuelve a quedar por pagar
     run('DELETE FROM autoprestamos WHERE id=?', [id]); // cuotas y orígenes caen en cascada
     if (a?.concepto_id && usosConcepto(a.concepto_id) === 0) run('DELETE FROM conceptos WHERE id=?', [a.concepto_id]);
   });
@@ -885,6 +920,7 @@ export function borrarTodo() {
     'cajas_tasas', 'cajas_ahorro', 'cuentas_saldos', 'movimientos', 'ingresos', 'presupuesto', 'saldos_mes', 'cuentas',
     'conceptos', 'personas', 'grupos', 'config'];
   transaction(() => {
+    run('UPDATE movimientos SET autoprestamo_id = NULL'); // movimientos ↔ autoprestamos se referencian entre sí
     for (const t of tablas) run(`DELETE FROM ${t}`);
     run('DELETE FROM sqlite_sequence');
     run(`INSERT OR IGNORE INTO grupos (nombre) VALUES ('Hogar'), ('Deudas')`);

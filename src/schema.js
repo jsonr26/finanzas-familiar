@@ -244,4 +244,9 @@ export const MIGRATIONS = [
   ALTER TABLE movimientos ADD COLUMN creado_en TEXT;
   ALTER TABLE ingresos ADD COLUMN creado_en TEXT;
   `,
+  // v17: pago de un concepto financiado con un autopréstamo: cuenta como gasto del concepto, pero la plata salió de la caja
+  // y no de las cuentas, así que no mueve saldos (ni el saldo de Cuentas ni el saldo anterior).
+  `
+  ALTER TABLE movimientos ADD COLUMN autoprestamo_id INTEGER REFERENCES autoprestamos(id);
+  `,
 ];

@@ -507,6 +507,54 @@ describe('repo', () => {
     expect(repo.conceptos().find((c) => c.id === id).cada_meses).toBe(1);
   });
 
+  describe('autopréstamo que paga un concepto por pagar', () => {
+    let caja, concepto;
+    beforeEach(() => {
+      caja = repo.guardarCaja({ nombre: 'Emergencias' });
+      repo.guardarCajaMov({ caja_id: caja, fecha: '2026-01-10', tipo: 'aporte', monto: 3_000_000 });
+      concepto = repo.guardarConcepto({ tipo: 'gasto_fijo', nombre: 'Predial', grupo: 'Hogar', presupuestado: true, monto_estimado: 800_000, periodicidad: 'manual', fecha_pago: '2026-11-20' });
+    });
+    const crear = (extra = {}) => repo.crearAutoprestamo({ nombre: 'Predial', origenes: [{ caja_id: caja, monto: 1_000_000 }], tasa_mensual: 0, plazo: 4,
+      fecha_inicio: '2026-11-10', primera: '2026-12-05', cubre: [{ concepto_id: concepto, monto: 800_000 }], ...extra });
+
+    it('registra el pago sin cuenta: cuenta como gasto del concepto pero no mueve saldos', () => {
+      const cta = repo.guardarCuenta({ nombre: 'Banco', saldo_inicial: 5_000_000 });
+      const id = crear();
+      const [mov] = repo.movimientosMes(2026, 11);
+      expect(mov).toMatchObject({ concepto_id: concepto, monto: 800_000, cuenta_id: null, autoprestamo_id: id });
+      expect(repo.pagosFinanciados(id)).toHaveLength(1);
+      expect(repo.gastosMes(2026, 11).find((f) => f.id === concepto).ejecutado).toBe(800_000);
+      expect(pendientesDePago(repo.gastosMes(2026, 11), 2026, 11, '2026-11-10').find((p) => p.id === concepto)).toBeUndefined();
+      expect(repo.financiadoMes(2026, 11)).toBe(800_000);
+      expect(repo.saldoAnterior(2026, 12)).toBe(5_000_000);                 // el saldo arrastrado no baja
+      expect(repo.saldosCuentas(2026, 11).sinCuenta.gastos).toBe(0);
+      expect(repo.saldosCuentas(2026, 11).total).toBe(5_000_000);
+      // editarlo con una cuenta no lo hace salir de ella, y asignar por persona tampoco lo toca
+      repo.guardarMovimiento({ id: mov.id, fecha: mov.fecha, concepto_id: concepto, monto: 800_000, cuenta_id: cta });
+      expect(repo.movimientosMes(2026, 11)[0].cuenta_id).toBeNull();
+      // las cuotas sí salen de la cuenta
+      const [q1] = repo.cuotasPrestamo(id);
+      repo.pagarCuotasPrestamo({ prestamo_id: id, ids: [q1.id], fecha: '2026-12-05', cuenta_id: cta });
+      expect(repo.saldosCuentas(2026, 12).total).toBe(5_000_000 - 250_000);
+    });
+
+    it('valida concepto, repetidos y que no pase del préstamo', () => {
+      expect(() => crear({ cubre: [{ concepto_id: concepto, monto: 1_200_000 }] })).toThrow(/superan/);
+      expect(() => crear({ cubre: [{ concepto_id: concepto, monto: 1 }, { concepto_id: concepto, monto: 1 }] })).toThrow(/dos veces/);
+      expect(() => crear({ cubre: [{ concepto_id: 9999, monto: 1 }] })).toThrow(/no se puede pagar/);
+      expect(repo.autoprestamos()).toHaveLength(0); // nada quedó a medias
+    });
+
+    it('eliminar el préstamo borra el pago financiado y borrarTodo funciona', () => {
+      const id = crear();
+      repo.eliminarAutoprestamo(id);
+      expect(repo.movimientosMes(2026, 11)).toHaveLength(0);
+      crear();
+      repo.borrarTodo();
+      expect(repo.movimientosMes(2026, 11)).toHaveLength(0);
+    });
+  });
+
   describe('conceptos que abonan a una caja de ahorro', () => {
     let viaje, casa, concepto;
     beforeEach(() => {

@@ -116,7 +116,8 @@ export default {
     const n = neto(ingresos);
     const gastado = movs.filter((m) => m.categoria !== 'Ahorro').reduce((s, m) => s + m.monto, 0);
     const ahorrado = movs.filter((m) => m.categoria === 'Ahorro').reduce((s, m) => s + m.monto, 0);
-    const saldo = saldoAnt.valor + n.neto - gastado - ahorrado;
+    const financiado = repo.financiadoMes(anio, mes); // pagado con autopréstamo: es gasto, pero no sale de las cuentas
+    const saldo = saldoAnt.valor + n.neto - gastado - ahorrado + financiado;
     const pres = repo.resumenPresupuesto(anio, mes);
     const filasGasto = repo.gastosMes(anio, mes);
     const pendientes = pendientesDePago(filasGasto, anio, mes);
@@ -192,7 +193,7 @@ export default {
     // --- Contenido de cada pestaña ---
     const filaMov = (m) => {
       const ultima_ = ult?.tipo === 'movimiento' && ult.id === m.id;
-      const sub = [m.grupo, m.persona, m.cuenta].filter(Boolean).map(esc).join(' · ');
+      const sub = [m.grupo, m.persona, m.autoprestamo_id ? 'con autopréstamo' : m.cuenta].filter(Boolean).map(esc).join(' · ');
       return `<div class="mv ${ultima_ ? 'nuevo' : ''}" data-mov-fila data-dia="${m.fecha}" data-q="${esc((m.concepto + ' ' + (m.nota ?? '') + ' ' + (m.grupo ?? '')).toLowerCase())}"
           data-grupo="${esc(m.grupo ?? '')}" data-persona="${esc(m.persona ?? '')}" data-cuenta="${esc(m.cuenta ?? SIN_CUENTA)}" data-monto="${m.monto}">
         <div class="dot ${m.categoria === 'Ahorro' ? 'd3' : tonoGrupo(m.grupo)}">${iconoGrupo(m.grupo, m.categoria)}</div>

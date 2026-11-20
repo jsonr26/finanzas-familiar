@@ -21,7 +21,7 @@ export default {
     const movs = repo.movimientosMes(anio, mes);
     const gastado = movs.filter((m) => m.categoria !== 'Ahorro').reduce((s, m) => s + m.monto, 0);
     const ahorrado = movs.filter((m) => m.categoria === 'Ahorro').reduce((s, m) => s + m.monto, 0);
-    const saldo = repo.saldoAnterior(anio, mes) + n.neto - gastado - ahorrado;
+    const saldo = repo.saldoAnterior(anio, mes) + n.neto - gastado - ahorrado + repo.financiadoMes(anio, mes); // lo pagado con autopréstamo no sale de las cuentas
 
     const todos = pendientesDePago(repo.gastosMes(anio, mes), anio, mes);
     const urgentes = todos.filter((p) => p.estado !== 'pendiente');
